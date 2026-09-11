@@ -109,6 +109,46 @@ def t_config() -> None:
     assert get(cfg, "not.exist", "fallback") == "fallback"
 
 
+def t_config_paths_frozen() -> None:
+    """A frozen (PyInstaller) build must store its config next to the executable.
+
+    Regression: ``APP_DIR`` used to be derived from ``__file__`` unconditionally,
+    which inside a onefile bundle points at PyInstaller's temporary ``_MEIPASS``
+    folder. The config was written there and thrown away when the process
+    exited, so the packaged app appeared to forget its API key on every launch.
+    """
+    import importlib
+    import sys
+    from pathlib import Path
+
+    import knocknock.config as config_module
+
+    real_executable = sys.executable
+
+    try:
+        # Simulate a frozen run: sys.frozen plus a fake executable location.
+        sys.frozen = True
+        sys.executable = r"C:\Some Folder\Knocknock.exe"
+        reloaded = importlib.reload(config_module)
+
+        assert reloaded.APP_DIR == Path(r"C:\Some Folder"), reloaded.APP_DIR
+        assert reloaded.CONFIG_PATH == Path(r"C:\Some Folder\config.json")
+        assert not str(reloaded.APP_DIR).startswith(str(Path(__file__).parent)), (
+            "a frozen build must not resolve to the source tree"
+        )
+    finally:
+        for attribute in ("frozen", "_MEIPASS"):
+            if hasattr(sys, attribute):
+                delattr(sys, attribute)
+        sys.executable = real_executable
+        importlib.reload(config_module)
+
+    # Back to source mode: the project root is the package's parent directory.
+    source_root = Path(config_module.__file__).resolve().parent.parent
+    assert config_module.APP_DIR == source_root, config_module.APP_DIR
+    assert config_module.EXAMPLE_PATH == source_root / "config.example.json"
+
+
 # ==================================================================== 2 hotkeys
 def t_hotkey_parse() -> None:
     from knocknock import winapi
@@ -1249,6 +1289,7 @@ def main() -> int:
 
     section("1. Config loading and merging")
     case("config read / default fill-in / dotted lookup", t_config)
+    case("frozen build stores config next to the executable", t_config_paths_frozen)
 
     section("2. Hotkey parsing")
     case("combo and function key parsing", t_hotkey_parse)

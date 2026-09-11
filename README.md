@@ -127,6 +127,10 @@ Knocknock/
 ├── config.example.json        # Template with default configuration
 ├── config.json                # Your configuration (generated on first run, git-ignored)
 ├── .github/workflows/ci.yml   # Runs the self-test suite on Windows
+├── packaging/
+│   ├── build.bat              # One-command build -> dist\Knocknock.exe
+│   ├── knocknock.spec         # PyInstaller build definition
+│   └── make_icon.py           # Generates packaging\knocknock.ico from the vector icon
 ├── screenshots/               # Interface previews
 ├── tests/
 │   └── selftest.py            # Self-test script (15 groups, no network access)
@@ -309,13 +313,33 @@ A: Also fixed — tooltips now use dedicated `tooltip_bg` / `tooltip_text` color
 
 ## 9. Packaging a single .exe (optional)
 
+A build script and a PyInstaller spec are included, so packaging is one command:
+
 ```bash
-pip install pyinstaller
-pyinstaller --noconfirm --windowed --onefile --name Knocknock ^
-  --collect-all PySide6 main.py
+packaging\build.bat
 ```
 
-The resulting `dist\Knocknock.exe` can be copied anywhere and used directly; `config.json` is created next to the executable.
+It creates the virtual environment if needed, installs PyInstaller, regenerates the
+application icon, and produces `dist\Knocknock.exe`.
+
+To do it by hand instead:
+
+```bash
+pip install pyinstaller
+.venv\Scripts\python.exe packaging\make_icon.py
+.venv\Scripts\python.exe -m PyInstaller packaging\knocknock.spec --noconfirm --clean
+```
+
+The resulting `dist\Knocknock.exe` is a single portable file — copy it anywhere and
+run it directly; `config.json` is created next to the executable on first launch.
+
+> The icon is generated from the same vector drawing the UI uses
+> (`knocknock.widgets.app_icon`), so `packaging\make_icon.py` must run before the
+> build if you want the executable to carry it.
+>
+> The spec deliberately excludes the Qt modules this project does not use (QML,
+> Quick, WebEngine, Multimedia, and others), which keeps the executable
+> noticeably smaller.
 
 ---
 

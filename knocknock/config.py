@@ -10,14 +10,43 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from . import i18n
 
-APP_DIR = Path(__file__).resolve().parent.parent
+
+def _app_dir() -> Path:
+    """Return the directory that holds the user's config.
+
+    Running from source this is the project root (the parent of the package).
+    Running as a PyInstaller bundle it must be the directory of the executable
+    itself, not the ``_MEIPASS`` extraction folder: that temporary directory is
+    deleted when the process exits, so a config written there would be lost and
+    the app would forget the API key on every launch.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+def _resource_dir() -> Path:
+    """Return the directory that holds bundled read-only resources.
+
+    For a frozen executable this is PyInstaller's ``_MEIPASS`` extraction folder
+    (where the spec file places config.example.json); otherwise it is the
+    project root, so running from source keeps working unchanged.
+    """
+    bundled = getattr(sys, "_MEIPASS", None)
+    if bundled:
+        return Path(bundled)
+    return Path(__file__).resolve().parent.parent
+
+
+APP_DIR = _app_dir()
 CONFIG_PATH = APP_DIR / "config.json"
-EXAMPLE_PATH = APP_DIR / "config.example.json"
+EXAMPLE_PATH = _resource_dir() / "config.example.json"
 
 # ---------------------------------------------------------------- presets
 PRESETS_ZH: List[Dict[str, str]] = [
