@@ -1,0 +1,52 @@
+{
+  "api": {
+    "provider": "openai",
+    "base_url": "https://api.openai.com/v1",
+    "api_key": "",
+    "model": "gpt-4o-mini",
+    "temperature": 0.3,
+    "max_tokens": 1200,
+    "timeout": 60,
+    "stream": true,
+    "system_prompt": "你是 Knocknock 助手。用户会给你一段来自屏幕的选中内容（文字或截图），并按你的指令提问。请直接给出答案，语言与用户提问保持一致，简洁、准确、条理清晰。涉及代码时使用 Markdown 代码块。"
+  },
+  "ui": {
+    "width": 520,
+    "min_width": 420,
+    "theme": "light",
+    "language": "zh",
+    "always_on_top": true,
+    "opacity": 0.99,
+    "font_size": 13,
+    "last_size": null
+  },
+  "hotkeys": {
+    "double_ctrl_interval_ms": 420,
+    "screenshot": "ctrl+alt+a",
+    "ask_selection": "ctrl+alt+q"
+  },
+  "behavior": {
+    "auto_copy_selection": true,
+    "restore_clipboard": false,
+    "auto_send_on_preset": true,
+    "close_on_esc": true,
+    "toggle_on_double_ctrl": true,
+    "max_history_turns": 6
+  },
+  "presets": [
+    { "name": "翻译成中文", "prompt": "把选中的内容翻译成简体中文，只输出译文，不要任何解释。" },
+    { "name": "翻译成英文", "prompt": "Translate the selected content into natural English. Output the translation only." },
+    { "name": "解释一下", "prompt": "用通俗易懂的语言解释这段内容，指出其中最关键的概念或结论。" },
+    { "name": "总结要点", "prompt": "用要点列表总结这段内容的核心信息，控制在 5 条以内。" },
+    { "name": "润色改写", "prompt": "润色这段文字，让它更通顺、更专业，但必须保持原意不变，只输出改写后的结果。" },
+    { "name": "代码解释", "prompt": "解释这段代码的功能、关键实现逻辑，并指出潜在的问题或可优化点。" }
+  ],
+  "presets_en": [
+    { "name": "Translate to Chinese", "prompt": "把选中的内容翻译成简体中文，只输出译文，不要任何解释。" },
+    { "name": "Translate to English", "prompt": "Translate the selected content into natural English. Output the translation only." },
+    { "name": "Explain", "prompt": "Explain this content in plain language and point out the key concepts or conclusions." },
+    { "name": "Summarise", "prompt": "Summarise the core message as a bullet list of at most 5 points." },
+    { "name": "Polish", "prompt": "Polish this text so it reads more smoothly and professionally, but keep the meaning unchanged. Output only the rewritten text." },
+    { "name": "Explain code", "prompt": "Explain what this code does and how it works, and point out potential problems or improvements." }
+  ]
+}

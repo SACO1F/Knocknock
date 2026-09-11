@@ -1,0 +1,17 @@
+# Normalise line endings: store LF in the repository regardless of platform.
+* text=auto eol=lf
+
+# Windows batch files must keep CRLF to run correctly.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets must never be line-ending converted.
+*.png binary
+*.jpg binary
+*.ico binary
+*.exe binary
+*.woff binary
+*.woff2 binary
+
+# Keep the generated lock-style files out of language statistics.
+*.json linguist-language=JSON

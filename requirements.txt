@@ -1,0 +1,5 @@
+# UI framework. PySide6-Essentials is much smaller (~60MB) and already includes
+# QtCore/QtGui/QtWidgets, which is all this project needs. To use the full
+# package instead, replace the first line below with: PySide6>=6.6.0
+PySide6-Essentials>=6.6.0
+requests>=2.31.0

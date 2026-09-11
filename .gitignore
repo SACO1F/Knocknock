@@ -1,0 +1,94 @@
+# ============================================================ secrets & config
+# Local configuration holds the user's API key and other private settings.
+# It must never be committed — use config.example.json as the template.
+config.json
+config.local.json
+*.local.json
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Anything that looks like a key / secret file
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.json
+credentials.json
+*credentials*.json
+
+# ============================================================ Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ============================================================ virtual envs
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# ============================================================ test & tooling cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# ============================================================ packaging
+*.spec
+
+# ============================================================ editors & IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.code-workspace
+.claude/
+.cursor/
+
+# ============================================================ OS files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+.Spotlight-V100
+.Trashes
+
+# ============================================================ agent scratch space
+# Local notes and throwaway debug scripts produced while developing.
+.workbuddy/
+.workbuddy-ai/
+
+# ============================================================ misc
+*.log
+*.bak
+*.tmp
+*.orig
+*.rej
+_*.txt
