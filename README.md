@@ -134,7 +134,6 @@ Knocknock/
 ├── LICENSE                    # MIT
 ├── config.example.json        # Template with default configuration
 ├── config.json                # Your configuration (generated on first run, git-ignored)
-├── .github/workflows/ci.yml   # Runs the self-test suite on Windows
 ├── packaging/
 │   ├── build.bat              # One-command build -> dist\Knocknock.exe
 │   ├── knocknock.spec         # PyInstaller build definition
