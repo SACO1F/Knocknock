@@ -9,6 +9,18 @@ import requests
 from PySide6.QtCore import QThread, Signal
 
 from . import i18n
+from .config import DEFAULT_MAX_TOKENS
+
+# Anthropic requires max_tokens to be present, so "auto" needs a concrete number.
+ANTHROPIC_DEFAULT_MAX_TOKENS = 8192
+
+
+def configured_max_tokens(api_cfg: Dict[str, Any]) -> int:
+    """Max output tokens from the config; 0 or a negative value means "server decides"."""
+    try:
+        return int(api_cfg.get("max_tokens", DEFAULT_MAX_TOKENS))
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_TOKENS
 
 
 def default_system_prompt(language: Optional[str] = None) -> str:
@@ -49,6 +61,34 @@ def build_user_content(context: Dict[str, Any], instruction: str) -> Any:
             }
         )
     return blocks if image_png else blocks[0]["text"]
+
+
+def messages_have_image(messages: List[Dict[str, Any]]) -> bool:
+    """Whether any message carries a picture (i.e. the request needs a vision model)."""
+    for message in messages or []:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "image_url":
+                return True
+    return False
+
+
+def resolve_model(api_cfg: Dict[str, Any], messages: List[Dict[str, Any]],
+                  fallback: str = "gpt-4o-mini") -> str:
+    """Pick the model for this request.
+
+    A screenshot goes to `vision_model`; everything else goes to `model`. An empty
+    vision model means "the same model does both", which is how this worked before
+    the two were separated and what keeps an existing config working unchanged.
+    """
+    text_model = str(api_cfg.get("model") or "").strip()
+    if messages_have_image(messages):
+        vision_model = str(api_cfg.get("vision_model") or "").strip()
+        if vision_model:
+            return vision_model
+    return text_model or fallback
 
 
 def to_anthropic_messages(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -120,14 +160,26 @@ class LLMWorker(QThread):
             self.failed.emit(f"{type(exc).__name__}: {exc}")
 
     # -------------------------------------------------------- OpenAI-compatible
+    def _model(self) -> str:
+        if str(self.api_cfg.get("provider", "openai")).lower() == "anthropic":
+            fallback = "claude-3-5-sonnet-latest"
+        else:
+            fallback = "gpt-4o-mini"
+        return resolve_model(self.api_cfg, self.messages, fallback)
+
     def _openai_payload(self) -> Dict[str, Any]:
-        return {
-            "model": self.api_cfg.get("model", "gpt-4o-mini"),
+        payload: Dict[str, Any] = {
+            "model": self._model(),
             "messages": self.messages,
             "temperature": float(self.api_cfg.get("temperature", 0.3)),
-            "max_tokens": int(self.api_cfg.get("max_tokens", 1200)),
             "stream": bool(self.api_cfg.get("stream", True)),
         }
+        tokens = configured_max_tokens(self.api_cfg)
+        # 0 means "no cap of our own": leaving the field out lets the provider use
+        # its own maximum instead of truncating us at a guess.
+        if tokens > 0:
+            payload["max_tokens"] = tokens
+        return payload
 
     def _run_openai(self) -> None:
         base_url = str(self.api_cfg.get("base_url") or "https://api.openai.com/v1").rstrip("/")
@@ -240,9 +292,12 @@ class LLMWorker(QThread):
             "anthropic-version": "2023-06-01",
         }
         packed = to_anthropic_messages(self.messages)
+        tokens = configured_max_tokens(self.api_cfg)
         payload: Dict[str, Any] = {
-            "model": self.api_cfg.get("model", "claude-3-5-sonnet-latest"),
-            "max_tokens": int(self.api_cfg.get("max_tokens", 1200)),
+            "model": self._model(),
+            # Anthropic rejects a request without max_tokens, so "auto" has to
+            # resolve to a number here.
+            "max_tokens": tokens if tokens > 0 else ANTHROPIC_DEFAULT_MAX_TOKENS,
             "temperature": float(self.api_cfg.get("temperature", 0.3)),
             "messages": packed["messages"],
             "stream": bool(self.api_cfg.get("stream", True)),
@@ -311,8 +366,7 @@ class LLMWorker(QThread):
         self.succeeded.emit("")
 
     # -------------------------------------------------------- error reporting
-    @staticmethod
-    def _describe_http_error(response) -> str:
+    def _describe_http_error(self, response) -> str:
         detail = ""
         try:
             body = response.json()
@@ -333,33 +387,58 @@ class LLMWorker(QThread):
             "llm.error.http",
             status=response.status_code,
             hint=hints.get(response.status_code, ""),
+            # Which model was asked for matters: "404" is almost always a typo in
+            # the model name, and with two models configured you want to know which.
+            model=self._model(),
             detail=detail,
         ).strip()
 
 
 # ---------------------------------------------------------------- connectivity test
+def _probe(api_cfg: Dict[str, Any], messages: List[Dict[str, Any]], model: str) -> Dict[str, str]:
+    """One cheap synchronous call against a specific model."""
+    cfg = dict(api_cfg)
+    cfg["stream"] = False
+    cfg["max_tokens"] = 32
+    # Pin the model so the routing in resolve_model() cannot send the probe to the
+    # other one (the vision probe must actually hit the vision model).
+    cfg["model"] = model
+    cfg["vision_model"] = ""
+    worker = LLMWorker(cfg, messages)
+    result: Dict[str, str] = {}
+
+    worker.succeeded.connect(lambda text: result.__setitem__("ok", text))
+    worker.failed.connect(lambda text: result.__setitem__("err", text))
+    worker.run()  # run synchronously on purpose
+    return result
+
+
 def test_connection(api_cfg: Dict[str, Any]) -> str:
-    """Run one call synchronously and return the result or an error string (used by Settings)."""
+    """Check both models and report line by line (used by Settings).
+
+    Testing the vision model separately matters: it is usually a different
+    (sometimes differently-spelled) model name, and without this you only find out
+    about a typo when a screenshot comes back with an error.
+    """
     messages = [
         {"role": "system", "content": i18n.t("llm.test.system")},
         {"role": "user", "content": i18n.t("llm.test.user")},
     ]
-    cfg = dict(api_cfg)
-    cfg["stream"] = False
-    cfg["max_tokens"] = 32
-    worker = LLMWorker(cfg, messages)
-    result: Dict[str, str] = {}
+    text_model = str(api_cfg.get("model") or "").strip()
+    vision_model = str(api_cfg.get("vision_model") or "").strip()
 
-    def on_ok(text: str) -> None:
-        result["ok"] = text
+    lines = [_report_line(i18n.t("llm.test.text_label"), _probe(api_cfg, messages, text_model))]
+    if not vision_model or vision_model == text_model:
+        lines.append(i18n.t("llm.test.vision_same", label=i18n.t("llm.test.vision_label")))
+    else:
+        lines.append(_report_line(i18n.t("llm.test.vision_label"),
+                                  _probe(api_cfg, messages, vision_model)))
+    return "\n".join(lines)
 
-    def on_fail(text: str) -> None:
-        result["err"] = text
 
-    worker.succeeded.connect(on_ok)
-    worker.failed.connect(on_fail)
-    worker.run()  # run synchronously on purpose
+def _report_line(label: str, result: Dict[str, str]) -> str:
     if "err" in result:
-        return i18n.t("llm.test.fail", text=result["err"])
-    reply = result.get("ok", "").strip() or i18n.t("llm.test.empty")
-    return i18n.t("llm.test.ok", text=reply)
+        outcome = i18n.t("llm.test.fail", text=result["err"])
+    else:
+        outcome = i18n.t("llm.test.ok", text=result.get("ok", "").strip() or i18n.t("llm.test.empty"))
+    return i18n.t("llm.test.line", label=label, result=outcome)

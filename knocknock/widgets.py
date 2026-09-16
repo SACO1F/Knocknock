@@ -294,6 +294,22 @@ def glyph_icon(name: str, size: int = 18, color: Optional[str] = None,
     return QIcon(pixmap)
 
 
+def fit_pixmap(pixmap: QPixmap, size: QSize) -> QPixmap:
+    """Scale a pixmap to fit exactly inside `size`, keeping the aspect ratio.
+
+    Used to bake a screenshot down to its final display size once; the growth
+    animation then rescales that already-small pixmap instead of the full-resolution
+    original, which is what keeps the animation cheap.
+    """
+    if size.isEmpty() or size.width() <= 0 or size.height() <= 0:
+        return pixmap
+    return pixmap.scaled(
+        size,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+
+
 def rounded_thumbnail(pixmap: QPixmap, width: int, height: int, radius: int = 8) -> QPixmap:
     """Return a copy of `pixmap` scaled to fit and clipped to rounded corners."""
     scaled = pixmap.scaled(

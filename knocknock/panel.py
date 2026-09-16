@@ -13,12 +13,26 @@ Layout strategy (so that frequent controls are always fully visible):
     result it can never be dragged smaller than "fits everything".
   * The result area is the only stretchy region: it grows when the window grows
     and gets squeezed first when the window shrinks.
+  * A screenshot is the one thing that resizes the window itself: the panel is
+    built around the picture and grows around it step by step rather than
+    squeezing it into a fixed strip (see `_start_reveal`).
 """
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QPoint,
+    QPropertyAnimation,
+    QRect,
+    QSize,
+    Qt,
+    QTimer,
+    Property,
+    Signal,
+)
 from PySide6.QtGui import QColor, QCursor, QGuiApplication, QKeyEvent, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -38,7 +52,7 @@ from . import capture as capture_mod
 from . import i18n
 from . import theme
 from . import widgets as w
-from .config import presets_for
+from .config import DEFAULT_IMAGE_PREVIEW, presets_for
 from .llm import LLMWorker, build_user_content
 
 # ---------------------------------------------------------------- size constants
@@ -54,12 +68,34 @@ HEADER_HEIGHT = 30
 INPUT_HEIGHT = 66
 RESULT_MIN_HEIGHT = 130     # minimum result height (a few lines must always fit)
 RESULT_IDEAL_HEIGHT = 240   # ideal result height when laying out automatically
-CONTEXT_MAX_HEIGHT = 190
+CONTEXT_MAX_HEIGHT = 190    # maximum height of the context block when it holds text
+CONTEXT_CHROME_HEIGHT = 46  # badge row + paddings inside the context frame (everything but the picture)
+CONTEXT_PADDING_X = 22      # left + right padding inside the context frame
 RESIZE_BORDER = 9           # how many pixels from an edge count as a resize hot zone
 GRIP_INSET = 5
 GRIP_SIZE = 9
 DEFAULT_PANEL_WIDTH = 520
 DEFAULT_MIN_WIDTH = 420
+
+# ---------------------------------------------------------------- screenshot sizing
+# A screenshot is context for the question, not the point of the window, so it is
+# kept to a preview strip: the panel is built around the picture (see _start_reveal)
+# but the picture never gets wider than IMAGE_MAX_WIDTH.
+IMAGE_MAX_WIDTH = 400       # hard ceiling on the preview width, whatever the tier or the config
+IMAGE_MIN_WIDTH = 240       # below this a screenshot stops being readable
+IMAGE_PREVIEW_BOXES = {
+    "small": QSize(240, 160),
+    "medium": QSize(320, 220),   # default
+    "large": QSize(400, 300),    # the ceiling: as wide as a preview is allowed to get
+}
+IMAGE_SCREEN_SHARE = 0.62   # hard ceiling on the window width, as a share of the screen
+SCREEN_EDGE_GAP = 20        # keep at least this much room between panel and screen edge
+REVEAL_MS = 760             # how long the panel takes to grow around a new screenshot
+REVEAL_MIN_SCALE = 0.14     # where that growth starts (a window cannot start at zero)
+
+# Qt's "no maximum" sentinel for widget sizes. PySide does not export
+# QWIDGETSIZE_MAX from QtWidgets, so it is spelled out here.
+WIDGET_SIZE_MAX = 16777215
 
 
 class CardFrame(QFrame):
@@ -179,11 +215,23 @@ class KnockPanel(QWidget):
         self._drag_offset: Optional[QPoint] = None
         self._on_top = bool(cfg.get("ui", {}).get("always_on_top", True))
 
+        # screenshot sizing / growth animation
+        self._image_target = QSize()          # size the picture is heading for while the panel grows
+        self._image_source = None             # picture already scaled to _image_target (cheap to re-scale)
+        self._image_reveal = 1.0              # 0..1 progress of the growth animation
+        self._reveal_step = 1000              # the same, as per-mille for QPropertyAnimation
+        self._reveal_from_width = 0
+        self._reveal_from_height = 0
+        self._reveal_target_height = 0
+        self._reveal_animation: Optional[QPropertyAnimation] = None
+        self._animating = False
+
         # resize state
         self._resize_edges = Qt.Edge(0)
         self._resize_origin = QPoint()
         self._resize_start = QRect()
         self._clamping = False
+        self._user_size = QSize()      # the size the user dragged out (not one the panel took by itself)
 
         ui_cfg = cfg.get("ui", {})
         self._preferred_width = int(ui_cfg.get("width", DEFAULT_PANEL_WIDTH))
@@ -201,7 +249,7 @@ class KnockPanel(QWidget):
         self._thumb_timer = QTimer(self)
         self._thumb_timer.setSingleShot(True)
         self._thumb_timer.setInterval(80)
-        self._thumb_timer.timeout.connect(self._refresh_context_image)
+        self._thumb_timer.timeout.connect(self._on_thumb_timer)
 
         self._restore_saved_size()
 
@@ -358,7 +406,7 @@ class KnockPanel(QWidget):
             )
 
         if self._context_set:
-            self._refresh_context_view()
+            self._refresh_context_view(animate=False)
         else:
             self._set_subtitle(i18n.t("panel.subtitle.long"), i18n.t("panel.subtitle.short"))
         self._refresh_compact()
@@ -418,14 +466,234 @@ class KnockPanel(QWidget):
         self.context_frame.hide()
         return self.context_frame
 
-    def _refresh_context_image(self) -> None:
-        """Regenerate the thumbnail after a width change (keeps it rounded and proportional)."""
+    # ---------------------------------------------------------------- screenshot block
+    def _screen_available(self) -> QRect:
+        """Available geometry of the screen the panel currently lives on."""
+        screen = QGuiApplication.screenAt(self.frameGeometry().topLeft())
+        if screen is None:
+            screen = QGuiApplication.screenAt(self.frameGeometry().center())
+        if screen is None:
+            screen = QGuiApplication.primaryScreen()
+        return screen.availableGeometry() if screen is not None else QRect(0, 0, 1280, 800)
+
+    def _panel_chrome_height(self) -> int:
+        """Vertical space the panel needs besides the picture itself.
+
+        Spelled out from the layout constants on purpose: the height budget for a
+        screenshot must not depend on the size the panel happens to have right
+        now, or the first estimate would feed back into itself.
+        """
+        chips = max(26, self.chips._height_for(self._content_width()))
+        actions = max(30, self.send_btn.sizeHint().height())
+        return (
+            SHADOW_MARGIN * 2 + 12 + 14      # window margin + card padding
+            + HEADER_HEIGHT + 10             # title bar
+            + CONTEXT_CHROME_HEIGHT + 10     # context badge row
+            + chips + 10                     # preset buttons
+            + INPUT_HEIGHT + 10              # input box
+            + actions + 10                   # action row
+            + RESULT_MIN_HEIGHT              # result area at its minimum
+        )
+
+    def _image_height_budget(self) -> int:
+        """Hard ceiling on the picture height: beyond this the panel leaves the screen."""
+        room = self._screen_available().height() - SCREEN_EDGE_GAP * 2 - self._panel_chrome_height()
+        return int(max(1, room))
+
+    def _window_width_for(self, image_width: int) -> int:
+        """Window width that leaves exactly `image_width` for the picture itself."""
+        return image_width + (SHADOW_MARGIN + CARD_PADDING) * 2 + CONTEXT_PADDING_X
+
+    def _image_box(self) -> QSize:
+        """The room a screenshot may take, from the "screenshot size" preference.
+
+        The preference is a box, not just a height: a tall capture would otherwise
+        keep its full width and turn the panel into a big empty frame. The width is
+        then clamped to IMAGE_MAX_WIDTH, so no tier — and no hand-edited config —
+        can make the preview wider than that.
+        """
+        wanted = str(self.cfg.get("ui", {}).get("image_preview", DEFAULT_IMAGE_PREVIEW)).lower()
+        box = IMAGE_PREVIEW_BOXES.get(wanted, IMAGE_PREVIEW_BOXES[DEFAULT_IMAGE_PREVIEW])
+        screen = self._screen_available()
+        frame = (SHADOW_MARGIN + CARD_PADDING) * 2 + CONTEXT_PADDING_X
+        # Never wider than the ceiling or the screen, and never so tall that the
+        # panel (chrome included) would run off the bottom of the display.
+        width = min(box.width(), IMAGE_MAX_WIDTH,
+                    max(IMAGE_MIN_WIDTH, int(screen.width() * IMAGE_SCREEN_SHARE) - frame))
+        height = min(box.height(), self._image_height_budget())
+        return QSize(width, max(1, height))
+
+    def _image_display_size(self, image: QPixmap) -> QSize:
+        """How large a screenshot should be drawn inside the panel.
+
+        The picture is fitted into the preferred box — scaled down but never up,
+        except up to the minimum readable width — and its aspect ratio is kept.
+        """
+        box = self._image_box()
+        ratio = image.height() / max(1, image.width())
+
+        width = min(image.width(), box.width())
+        height = width * ratio
+        if height > box.height():
+            width, height = box.height() / ratio, float(box.height())
+        if width < IMAGE_MIN_WIDTH:
+            width = min(IMAGE_MIN_WIDTH, box.width())
+            height = width * ratio
+        if width > box.width() or height > box.height():
+            # The minimum readable width can still overshoot a small box; the box
+            # wins, because the panel always has to fit on the screen.
+            shrink = min(box.width() / max(width, 1), box.height() / max(height, 1))
+            width, height = width * shrink, height * shrink
+        return QSize(max(1, int(round(width))), max(1, int(round(height))))
+
+    def _prepare_image(self, animate: bool) -> None:
+        """Work out the picture size and either grow the panel around it or just apply it."""
         image = self._ctx.get("image")
-        if image is None or self.context_image.isHidden():
+        if image is None:
             return
-        width = max(120, self._content_width() - 22)
-        thumb = w.rounded_thumbnail(image, width, 150, 8)
-        self.context_image.setPixmap(thumb)
+        target = self._image_display_size(image)
+        if target.isEmpty():
+            return
+        self._image_target = target
+        # Scale once to the final size; the growth animation then only has to
+        # re-scale this already-small pixmap, which is cheap enough to do per frame.
+        self._image_source = w.fit_pixmap(image, target)
+        if animate:
+            self._start_reveal()
+        else:
+            self._image_reveal = 1.0
+            self._apply_image_size(target)
+            self._apply_natural_size()
+
+    def _apply_image_size(self, size: QSize) -> None:
+        """Draw the picture at `size` and pin the context frame to exactly fit it."""
+        if self._image_source is None or size.isEmpty():
+            return
+        self.context_image.setPixmap(
+            w.rounded_thumbnail(self._image_source, size.width(), size.height(), 8)
+        )
+        self.context_image.setFixedSize(size)
+        self.context_frame.setFixedHeight(CONTEXT_CHROME_HEIGHT + size.height())
+        self.layout().activate()
+
+    def _reset_image_block(self) -> None:
+        """Drop the screenshot sizing constraints so the context frame can size itself again."""
+        self._image_target = QSize()
+        self._image_source = None
+        self._image_reveal = 1.0
+        self.context_image.setMinimumSize(0, 0)
+        self.context_image.setMaximumSize(WIDGET_SIZE_MAX, WIDGET_SIZE_MAX)
+        self.context_frame.setMinimumHeight(0)
+        self.context_frame.setMaximumHeight(CONTEXT_MAX_HEIGHT)
+
+    def _refresh_context_image(self) -> None:
+        """Re-render the thumbnail after a width change (keeps it rounded and proportional)."""
+        image = self._ctx.get("image")
+        if image is None or self.context_image.isHidden() or self._animating:
+            return
+        target = self._image_display_size(image)
+        if target.isEmpty():
+            return
+        self._image_target = target
+        self._image_source = w.fit_pixmap(image, target)
+        self._apply_image_size(target)
+
+    def _on_thumb_timer(self) -> None:
+        """After a resize settled, redraw the thumbnail and make sure the content still fits."""
+        if self._animating:
+            return
+        self._refresh_context_image()
+        self._ensure_fits()
+
+    # ---------------------------------------------------------------- growth animation
+    def _start_reveal(self) -> None:
+        """Grow the panel around a brand-new screenshot, step by step instead of in one jump."""
+        target = self._image_target
+        if target.isEmpty():
+            self._apply_natural_size()
+            return
+
+        self._cancel_reveal()
+        self._reveal_from_width = self.width()
+        self._reveal_from_height = self.height()
+        # Apply the final picture size once, purely to measure the panel it needs,
+        # then collapse back and grow into that size.
+        self._apply_image_size(target)
+        self._reveal_target_height = self._min_height()
+        if self.result.isVisible():
+            self._reveal_target_height += RESULT_IDEAL_HEIGHT - RESULT_MIN_HEIGHT
+
+        self._animating = True
+        self._reveal_step = int(REVEAL_MIN_SCALE * 1000)
+        self._apply_reveal(self._reveal_step / 1000.0)
+
+        animation = QPropertyAnimation(self, b"revealStep", self)
+        animation.setDuration(REVEAL_MS)
+        animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        animation.setStartValue(self._reveal_step)
+        animation.setEndValue(1000)
+        animation.finished.connect(self._on_reveal_finished)
+        self._reveal_animation = animation
+        animation.start()
+
+    def _apply_reveal(self, scale: float) -> None:
+        """One frame of the growth animation: scale the picture, then the window around it."""
+        target = self._image_target
+        if self._image_source is None or target.isEmpty():
+            return
+        scale = max(1e-3, min(1.0, float(scale)))
+        self._image_reveal = scale
+
+        size = QSize(
+            max(1, int(round(target.width() * scale))),
+            max(1, int(round(target.height() * scale))),
+        )
+        self.context_image.setPixmap(
+            w.rounded_thumbnail(self._image_source, size.width(), size.height(),
+                                max(1, int(round(8 * scale))))
+        )
+        self.context_image.setFixedSize(size)
+        self.context_frame.setFixedHeight(CONTEXT_CHROME_HEIGHT + size.height())
+        self.layout().activate()
+
+        # Window size: interpolated from wherever the panel was to the size the
+        # finished picture needs — so a small picture also lets the panel settle
+        # back down — but never smaller than the picture or the panel minimum.
+        final_width = self._window_width_for(target.width())
+        width = self._reveal_from_width + (final_width - self._reveal_from_width) * scale
+        width = max(width,
+                    size.width() + (SHADOW_MARGIN + CARD_PADDING) * 2 + CONTEXT_PADDING_X,
+                    self._min_width())
+        limit = max(self._min_width(), self._screen_available().width() - SCREEN_EDGE_GAP * 2)
+        width = int(min(width, limit))
+
+        height = self._reveal_from_height + (self._reveal_target_height - self._reveal_from_height) * scale
+        height = int(max(round(height), self._min_height()))
+        if (width, height) != (self.width(), self.height()):
+            self.resize(width, height)
+        self._clamp_to_screen()
+
+    def _on_reveal_finished(self) -> None:
+        self._animating = False
+        self._reveal_animation = None
+        self._reveal_step = 1000
+        self._apply_reveal(1.0)
+        self._apply_natural_size()
+        self._thumb_timer.start()
+
+    def _cancel_reveal(self) -> None:
+        if self._reveal_animation is not None:
+            self._reveal_animation.stop()
+            self._reveal_animation = None
+        self._animating = False
+
+    def _clamp_to_screen(self) -> None:
+        """Keep the panel on screen while it grows (it expands downwards by default)."""
+        area = self._screen_available()
+        x = max(area.left(), min(self.x(), area.right() - self.width() + 1))
+        y = max(area.top(), min(self.y(), area.bottom() - self.height() + 1))
+        if (x, y) != (self.x(), self.y()):
+            self.move(x, y)
 
     # ---------------------------------------------------------------- presets
     def _build_chips(self) -> QWidget:
@@ -528,10 +796,16 @@ class KnockPanel(QWidget):
 
     def _natural_size(self) -> QSize:
         """The size that exactly fits the current content (result area at its ideal height)."""
+        width = self._preferred_width
+        target = self._image_target
+        if self._ctx.get("image") is not None and not target.isEmpty():
+            # A screenshot decides the width: the panel is built around the picture
+            # (this is what keeps "grow to fit the picture" from being undone).
+            width = self._window_width_for(target.width())
         height = self._min_height()
         if self.result.isVisible():
             height += RESULT_IDEAL_HEIGHT - RESULT_MIN_HEIGHT
-        return QSize(self._preferred_width, height)
+        return QSize(width, height)
 
     def _apply_natural_size(self) -> None:
         """Resize to the natural size; if the user resized manually, only guarantee it fits."""
@@ -540,6 +814,7 @@ class KnockPanel(QWidget):
             return
         size = self._natural_size()
         self.resize(max(size.width(), self._min_width()), max(size.height(), self._min_height()))
+        self._clamp_to_screen()
 
     def _ensure_fits(self) -> None:
         """Make sure the window is no smaller than the layout's minimum size.
@@ -556,10 +831,25 @@ class KnockPanel(QWidget):
         self._clamping = True
         self.resize(width, height)
         self._clamping = False
+        self._clamp_to_screen()
+
+    def _remember_size(self) -> None:
+        """Persist the size the user chose — but only while the panel still has it.
+
+        The panel resizes itself around a screenshot. That size is not a size the
+        user ever asked for, and saving it would quietly replace the one they did
+        ask for (which is how a capture ends up resizing the panel *permanently*:
+        the next launch would restore the picture-fitted size instead).
+        """
+        if not self._user_resized or self._user_size != self.size():
+            return
+        self.size_changed.emit(self.width(), self.height())
 
     def reset_size(self) -> None:
         """Return to the default natural size (called when "Reset panel size" is clicked)."""
+        self._cancel_reveal()
         self._user_resized = False
+        self._user_size = QSize()
         self.cfg.get("ui", {}).pop("last_size", None)
         self._apply_natural_size()
 
@@ -572,6 +862,7 @@ class KnockPanel(QWidget):
                 width = height = 0
             if width > 0 and height > 0:
                 self._user_resized = True
+                self._user_size = QSize(width, height)
                 self.resize(width, height)
                 return
         self._apply_natural_size()
@@ -639,6 +930,7 @@ class KnockPanel(QWidget):
             return False
         self._resize_edges = Qt.Edge(0)
         self._user_resized = True
+        self._user_size = QSize(self.size())
         self.size_changed.emit(self.width(), self.height())
         return True
 
@@ -660,6 +952,7 @@ class KnockPanel(QWidget):
 
         self.setGeometry(rect)
         self._user_resized = True
+        self._user_size = QSize(rect.size())
 
     # -------------------------------------------------- mouse on the card (the path that actually works)
     def eventFilter(self, obj, event):  # noqa: N802
@@ -757,6 +1050,7 @@ class KnockPanel(QWidget):
     def set_context(self, text: str = "", image: Optional[QPixmap] = None,
                     source: str = "selection", clear_result: bool = True) -> None:
         """Set the "selected content" for this question."""
+        self._cancel_reveal()
         self._ctx = {
             "text": (text or "").strip(),
             "image": image,
@@ -766,19 +1060,23 @@ class KnockPanel(QWidget):
         self._messages = []  # new context -> reset the multi-turn conversation
         self._context_set = True
 
+        if clear_result:
+            # Without the relayout: the context view below decides the new size in
+            # one step, so the panel must not shrink and grow again on the way.
+            self._clear_result(relayout=False)
+
+        # The preset buttons are rebuilt first: their row count feeds the height
+        # budget the screenshot is fitted into.
+        self._rebuild_chips()
         self._refresh_context_view()
 
-        if clear_result:
-            self._clear_result()
-
-        self._rebuild_chips()
-        self._apply_natural_size()
-
-    def _refresh_context_view(self) -> None:
+    def _refresh_context_view(self, animate: bool = True) -> None:
         """Refresh the badge, character count and subtitle for the current context (text / screenshot / empty).
 
         Split into its own method so a language switch can recompute in place
-        without throwing the context away and re-setting it.
+        without throwing the context away and re-setting it. Only a context that
+        just arrived is grown into view; re-rendering an existing one (language
+        switch, theme switch) applies its size straight away.
         """
         text = self._ctx.get("text") or ""
         image = self._ctx.get("image")
@@ -787,21 +1085,24 @@ class KnockPanel(QWidget):
 
         if not has_text and not has_image:
             self.context_frame.hide()
+            self._reset_image_block()
             self._set_subtitle(
                 i18n.t("panel.state.no_context.long"), i18n.t("panel.state.no_context.short")
             )
+            self._apply_natural_size()
             return
 
         self.context_frame.show()
         if has_image:
             self.context_badge.setText(i18n.t("panel.badge.image"))
             self.context_text.hide()
-            self._refresh_context_image()
             self.context_image.show()
             self.context_meta.setText(f"{image.width()} × {image.height()} px")
+            self._prepare_image(animate and not self._animating)
         else:
             self.context_badge.setText(i18n.t("panel.badge.text"))
             self.context_image.hide()
+            self._reset_image_block()
             # Roughly 13px per Chinese character and 7px per English character;
             # estimate the line width per language so English is not cut mid-line.
             char_px = 7 if i18n.is_english() else 13
@@ -812,6 +1113,7 @@ class KnockPanel(QWidget):
             self.context_text.setText(preview)
             self.context_text.show()
             self.context_meta.setText(i18n.t("panel.meta.chars", count=len(text)))
+            self._apply_natural_size()
 
         self._set_subtitle(
             i18n.t("panel.state.image.long") if has_image else i18n.t("panel.state.text.long"),
@@ -827,9 +1129,9 @@ class KnockPanel(QWidget):
         self.input.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def hide_panel(self) -> None:
-        if self._user_resized:
-            self.size_changed.emit(self.width(), self.height())
+        self._remember_size()
         self.hide()
+        self.panel_hidden.emit()
         self.panel_hidden.emit()
 
     def apply_config(self, cfg: Dict[str, Any]) -> None:
@@ -850,7 +1152,23 @@ class KnockPanel(QWidget):
 
         self._apply_window_flags()
         self._rebuild_chips()
-        self._apply_natural_size()
+
+        # A screenshot may still be on screen: re-fit it in place, so a changed
+        # "screenshot size" preference takes effect without another capture.
+        refit = False
+        image = self._ctx.get("image")
+        if image is not None and not self.context_image.isHidden():
+            self._cancel_reveal()
+            target = self._image_display_size(image)
+            refit = target != self._image_target
+            if refit:
+                self._image_target = target
+                self._image_source = w.fit_pixmap(image, target)
+
+        if refit:
+            self._start_reveal()      # grows — or settles back down — smoothly
+        else:
+            self._apply_natural_size()
 
     def apply_theme(self) -> None:
         """Refresh colour-dependent elements after a theme switch."""
@@ -981,12 +1299,13 @@ class KnockPanel(QWidget):
             return
         self._render_markdown(text)
 
-    def _clear_result(self) -> None:
+    def _clear_result(self, relayout: bool = True) -> None:
         self._stream_buffer = ""
         self.copy_btn.setEnabled(False)
         self.result.setPlainText("")
         self.result.hide()
-        self._apply_natural_size()
+        if relayout:
+            self._apply_natural_size()
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
@@ -1016,8 +1335,21 @@ class KnockPanel(QWidget):
             return
         super().keyPressEvent(event)
 
+    # ---------------------------------------------------------------- animation property
+    # QPropertyAnimation needs a real Qt property to interpolate, so the growth
+    # progress is exposed in per-mille (integers interpolate cleanly, and a
+    # third decimal of a pixel is not worth animating).
+    def _get_reveal_step(self) -> int:
+        return self._reveal_step
+
+    def _set_reveal_step(self, value: int) -> None:
+        self._reveal_step = int(value)
+        if self._animating:
+            self._apply_reveal(self._reveal_step / 1000.0)
+
+    revealStep = Property(int, _get_reveal_step, _set_reveal_step)
+
     def closeEvent(self, event) -> None:  # noqa: N802
-        if self._user_resized:
-            self.size_changed.emit(self.width(), self.height())
+        self._remember_size()
         self.hide()
         event.ignore()

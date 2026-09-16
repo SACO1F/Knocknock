@@ -48,6 +48,21 @@ APP_DIR = _app_dir()
 CONFIG_PATH = APP_DIR / "config.json"
 EXAMPLE_PATH = _resource_dir() / "config.example.json"
 
+# ---------------------------------------------------------------- model defaults
+# Answers used to be cut off mid-sentence: 1200 tokens is not enough for anything
+# that explains a screenshot or a code block (and a reasoning model spends its
+# budget on thinking first). 4096 is the largest cap every mainstream provider
+# accepts, so it is a safe default; setting it to 0 means "let the server decide".
+DEFAULT_MAX_TOKENS = 4096
+MAX_TOKENS_LIMIT = 131072
+_LEGACY_MAX_TOKENS = 1200   # the previous built-in default, too small to be useful
+
+# How much room a captured picture may take on screen ("image_preview"). The
+# pixel sizes behind these names live in panel.py, next to the layout they have
+# to fit into; config only validates the name.
+IMAGE_PREVIEWS = ("small", "medium", "large")
+DEFAULT_IMAGE_PREVIEW = "medium"
+
 # ---------------------------------------------------------------- presets
 PRESETS_ZH: List[Dict[str, str]] = [
     {"name": "翻译成中文", "prompt": "把选中的内容翻译成简体中文，只输出译文，不要任何解释。"},
@@ -87,9 +102,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "provider": "openai",
         "base_url": "https://api.openai.com/v1",
         "api_key": "",
+        # Text questions use `model`, anything carrying a screenshot uses
+        # `vision_model`; an empty vision model means "same as the text one".
         "model": "gpt-4o-mini",
+        "vision_model": "",
         "temperature": 0.3,
-        "max_tokens": 1200,
+        "max_tokens": DEFAULT_MAX_TOKENS,
         "timeout": 60,
         "stream": True,
         "system_prompt": i18n.text("llm.system_prompt", i18n.ZH),
@@ -102,6 +120,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "always_on_top": True,
         "opacity": 0.99,
         "font_size": 13,
+        "image_preview": DEFAULT_IMAGE_PREVIEW,  # small / medium / large
         "last_size": None,     # size the user dragged out, reused on next launch
     },
     "hotkeys": {
@@ -150,6 +169,8 @@ def _normalize(cfg: Dict[str, Any]) -> None:
     ui = cfg.setdefault("ui", {})
     language = i18n.normalize_language(ui.get("language"))
     ui["language"] = language
+    if str(ui.get("image_preview", "")).lower() not in IMAGE_PREVIEWS:
+        ui["image_preview"] = DEFAULT_IMAGE_PREVIEW
 
     # Older configs have no presets_en; fill it with the defaults. An empty list
     # is kept as-is, because clearing it was the user's own choice.
@@ -160,9 +181,21 @@ def _normalize(cfg: Dict[str, Any]) -> None:
     # System prompt: follow the UI language when it is blank or still one of the
     # built-in defaults (i.e. the user never edited it).
     api = cfg.setdefault("api", {})
+    api["vision_model"] = str(api.get("vision_model") or "").strip()
     prompt = str(api.get("system_prompt") or "").strip()
     if not prompt or prompt in _KNOWN_SYSTEM_PROMPTS:
         api["system_prompt"] = i18n.text("llm.system_prompt", language)
+
+    # Output tokens: 1200 used to be the built-in default, and answers were being
+    # cut off mid-sentence because of it. Configs still sitting on that value
+    # never chose it, so they are lifted to the new default.
+    try:
+        tokens = int(api.get("max_tokens", DEFAULT_MAX_TOKENS))
+    except (TypeError, ValueError):
+        tokens = DEFAULT_MAX_TOKENS
+    if tokens == _LEGACY_MAX_TOKENS:
+        tokens = DEFAULT_MAX_TOKENS
+    api["max_tokens"] = max(0, min(tokens, MAX_TOKENS_LIMIT))
 
 
 def load_config() -> Dict[str, Any]:

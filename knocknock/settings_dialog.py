@@ -30,7 +30,15 @@ from PySide6.QtWidgets import (
 
 from . import i18n
 from . import theme
-from .config import presets_for, presets_key, save_config
+from .config import (
+    DEFAULT_IMAGE_PREVIEW,
+    DEFAULT_MAX_TOKENS,
+    IMAGE_PREVIEWS,
+    MAX_TOKENS_LIMIT,
+    presets_for,
+    presets_key,
+    save_config,
+)
 
 
 class SettingsDialog(QDialog):
@@ -117,8 +125,17 @@ class SettingsDialog(QDialog):
         form.addRow(self._label(i18n.t("settings.api.api_key")), self.api_key_edit)
 
         self.model_edit = QLineEdit(str(api.get("model", "")), page)
-        self.model_edit.setPlaceholderText("gpt-4o-mini / deepseek-chat / qwen-vl-max …")
+        self.model_edit.setPlaceholderText("gpt-4o-mini / deepseek-chat / qwen-plus …")
         form.addRow(self._label(i18n.t("settings.api.model")), self.model_edit)
+
+        self.vision_model_edit = QLineEdit(str(api.get("vision_model", "")), page)
+        self.vision_model_edit.setPlaceholderText("gpt-4o / qwen-vl-max / glm-4v …")
+        form.addRow(self._label(i18n.t("settings.api.vision_model")), self.vision_model_edit)
+
+        vision_tip = QLabel(i18n.t("settings.api.vision_model_tip"), page)
+        vision_tip.setObjectName("Hint")
+        vision_tip.setWordWrap(True)
+        form.addRow("", vision_tip)
 
         self.temperature_spin = QDoubleSpinBox(page)
         self.temperature_spin.setRange(0.0, 2.0)
@@ -127,10 +144,17 @@ class SettingsDialog(QDialog):
         form.addRow(self._label(i18n.t("settings.api.temperature")), self.temperature_spin)
 
         self.max_tokens_spin = QSpinBox(page)
-        self.max_tokens_spin.setRange(64, 32000)
-        self.max_tokens_spin.setSingleStep(64)
-        self.max_tokens_spin.setValue(int(api.get("max_tokens", 1200)))
+        self.max_tokens_spin.setRange(0, MAX_TOKENS_LIMIT)
+        self.max_tokens_spin.setSingleStep(256)
+        # 0 is a real choice, not a mistake: it means "let the server decide".
+        self.max_tokens_spin.setSpecialValueText(i18n.t("settings.api.max_tokens_auto"))
+        self.max_tokens_spin.setValue(int(api.get("max_tokens", DEFAULT_MAX_TOKENS)))
         form.addRow(self._label(i18n.t("settings.api.max_tokens")), self.max_tokens_spin)
+
+        tokens_tip = QLabel(i18n.t("settings.api.max_tokens_tip"), page)
+        tokens_tip.setObjectName("Hint")
+        tokens_tip.setWordWrap(True)
+        form.addRow("", tokens_tip)
 
         self.stream_check = QCheckBox(i18n.t("settings.api.stream"), page)
         self.stream_check.setChecked(bool(api.get("stream", True)))
@@ -242,6 +266,20 @@ class SettingsDialog(QDialog):
         self.font_size_spin.setValue(int(ui.get("font_size", 13)))
         self.font_size_spin.valueChanged.connect(self._preview_theme)
         form.addRow(self._label(i18n.t("settings.appearance.font_size")), self.font_size_spin)
+
+        self.image_preview_box = QComboBox(page)
+        for value in IMAGE_PREVIEWS:
+            self.image_preview_box.addItem(i18n.t(f"settings.appearance.image_preview.{value}"), value)
+        index = self.image_preview_box.findData(
+            str(ui.get("image_preview", DEFAULT_IMAGE_PREVIEW)).lower()
+        )
+        self.image_preview_box.setCurrentIndex(max(0, index))
+        form.addRow(self._label(i18n.t("settings.appearance.image_preview")), self.image_preview_box)
+
+        preview_tip = QLabel(i18n.t("settings.appearance.image_preview_tip"), page)
+        preview_tip.setObjectName("Hint")
+        preview_tip.setWordWrap(True)
+        form.addRow("", preview_tip)
 
         layout.addLayout(form)
 
@@ -359,6 +397,7 @@ class SettingsDialog(QDialog):
         api["base_url"] = self.base_url_edit.text().strip()
         api["api_key"] = self.api_key_edit.text().strip()
         api["model"] = self.model_edit.text().strip()
+        api["vision_model"] = self.vision_model_edit.text().strip()
         api["temperature"] = float(self.temperature_spin.value())
         api["max_tokens"] = int(self.max_tokens_spin.value())
         api["stream"] = bool(self.stream_check.isChecked())
@@ -381,6 +420,7 @@ class SettingsDialog(QDialog):
         ui["language"] = i18n.normalize_language(self.language_box.currentData())
         ui["opacity"] = float(self.opacity_spin.value())
         ui["font_size"] = int(self.font_size_spin.value())
+        ui["image_preview"] = str(self.image_preview_box.currentData())
         # width / min_width are kept as internal parameters only; they are no
         # longer exposed in the UI (you resize the panel by dragging it).
         if self.reset_size_requested:

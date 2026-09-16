@@ -4,8 +4,9 @@
     "base_url": "https://api.openai.com/v1",
     "api_key": "",
     "model": "gpt-4o-mini",
+    "vision_model": "",
     "temperature": 0.3,
-    "max_tokens": 1200,
+    "max_tokens": 4096,
     "timeout": 60,
     "stream": true,
     "system_prompt": "你是 Knocknock 助手。用户会给你一段来自屏幕的选中内容（文字或截图），并按你的指令提问。请直接给出答案，语言与用户提问保持一致，简洁、准确、条理清晰。涉及代码时使用 Markdown 代码块。"
@@ -18,6 +19,7 @@
     "always_on_top": true,
     "opacity": 0.99,
     "font_size": 13,
+    "image_preview": "medium",
     "last_size": null
   },
   "hotkeys": {

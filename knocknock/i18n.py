@@ -89,7 +89,8 @@ _ZH: Dict[str, str] = {
         "可以依次排查：\n"
         "1. **模型名**是否正确、账号是否有额度；\n"
         "2. **最大输出 tokens** 是否太小（推理型模型会先消耗在思考上）；\n"
-        "3. 截图提问需要**支持视觉的模型**（gpt-4o / qwen-vl-max / glm-4v 等）；\n"
+        "3. 截图提问走的是「设置 → 模型接口 → **视觉模型**」，确认它已填写且是多模态模型"
+        "（gpt-4o / qwen-vl-max / glm-4v 等）；\n"
         "4. 到「设置 → 模型接口」点一下**测试连接**看返回什么。"
     ),
     # 设置窗口
@@ -105,12 +106,23 @@ _ZH: Dict[str, str] = {
     "settings.api.provider.anthropic": "Anthropic Claude",
     "settings.api.base_url": "Base URL",
     "settings.api.api_key": "API Key",
-    "settings.api.model": "模型名称",
+    "settings.api.model": "语言模型（文字提问）",
+    "settings.api.vision_model": "视觉模型（截图提问）",
+    "settings.api.vision_model_tip": (
+        "截图会走视觉模型，文字提问走语言模型。视觉模型**留空**表示两者共用一个模型。"
+        "点下面的「测试连接」会两个模型都测一遍。"
+    ),
     "settings.api.temperature": "Temperature",
     "settings.api.max_tokens": "最大输出 tokens",
+    "settings.api.max_tokens_auto": "由服务端决定",
+    "settings.api.max_tokens_tip": (
+        "太小会把回答从中间截断（推理型模型还会先花 tokens 思考，正文可能一个字都没有）。"
+        "默认 4096，够写完整的解释和代码；填 0 则不限制，交给服务端用自己的上限；"
+        "填得比模型上限还大，接口会直接报错。"
+    ),
     "settings.api.stream": "流式输出（逐字显示）",
     "settings.api.system_prompt": "系统提示词",
-    "settings.api.tip": "提示：截图问答需要选择支持视觉的模型（如 gpt-4o / qwen-vl-max / glm-4v 等）。",
+    "settings.api.tip": "提示：截图提问需要支持视觉的模型（如 gpt-4o / qwen-vl-max / glm-4v 等），填在「视觉模型」里。",
     "settings.preset.hint": "这些按钮会出现在面板上，点击即用当前选中内容执行对应指令。",
     "settings.preset.col_name": "按钮名称",
     "settings.preset.col_prompt": "发给模型的指令",
@@ -122,6 +134,14 @@ _ZH: Dict[str, str] = {
     "settings.appearance.language_note": "语言切换在保存后生效；预置指令按语言分别保存。",
     "settings.appearance.opacity": "面板不透明度",
     "settings.appearance.font_size": "界面字号",
+    "settings.appearance.image_preview": "截图显示尺寸",
+    "settings.appearance.image_preview.small": "小（240 px 宽）",
+    "settings.appearance.image_preview.medium": "中（320 px 宽，默认）",
+    "settings.appearance.image_preview.large": "大（400 px 宽，上限）",
+    "settings.appearance.image_preview_tip": (
+        "截图只是提问的上下文，所以宽度封顶在 400 px，怎么调都不会更宽；"
+        "高度按比例走。换档位后面板会平滑地重新收放一次。"
+    ),
     "settings.appearance.reset_size": "恢复默认尺寸",
     "settings.appearance.size_saved": "当前记住的是 {width} × {height}",
     "settings.appearance.size_default": "当前使用默认尺寸",
@@ -164,12 +184,13 @@ _ZH: Dict[str, str] = {
     "llm.error.no_text": "服务端返回里没有正文内容：\n{body}",
     "llm.error.reasoning_only": (
         "模型只输出了推理过程、没有正文，通常是 **max_tokens 太小** 被截断了。\n"
-        "请到「设置 → 模型接口」把「最大输出 tokens」调大（比如 4000）后重试。\n\n"
+        "请到「设置 → 模型接口」把「最大输出 tokens」再调大（比如 8000），"
+        "或填 0 交给服务端决定后重试。\n\n"
         "推理过程（节选）：\n{reasoning}"
     ),
     "llm.error.unknown": "未知错误",
     "llm.error.anthropic_stream": "服务端没有返回流式数据，原始内容：\n{body}",
-    "llm.error.http": "请求失败 {status} {hint}\n{detail}",
+    "llm.error.http": "请求失败 {status} {hint}\n模型：{model}\n{detail}",
     "llm.hint.401": "（API Key 无效或未填写，请在设置里检查）",
     "llm.hint.403": "（没有访问权限，请检查模型名或账号权限）",
     "llm.hint.404": "（接口地址或模型名不存在，请检查 Base URL）",
@@ -179,6 +200,10 @@ _ZH: Dict[str, str] = {
     "llm.test.ok": "成功：{text}",
     "llm.test.fail": "失败：{text}",
     "llm.test.empty": "(空回复)",
+    "llm.test.line": "{label}：{result}",
+    "llm.test.text_label": "语言模型",
+    "llm.test.vision_label": "视觉模型",
+    "llm.test.vision_same": "{label}：未单独设置，与语言模型相同",
 }
 
 # ---------------------------------------------------------------- English table
@@ -241,7 +266,8 @@ _EN: Dict[str, str] = {
         "Things worth checking, in order:\n"
         "1. whether the **model name** is correct and your account still has quota;\n"
         "2. whether **max output tokens** is too small (reasoning models spend it on thinking first);\n"
-        "3. screenshot Q&A needs a **vision-capable model** (gpt-4o / qwen-vl-max / glm-4v …);\n"
+        "3. screenshots go to **Settings → Model API → Vision model** — make sure it is "
+        "filled in and is a multimodal model (gpt-4o / qwen-vl-max / glm-4v …);\n"
         "4. open **Settings → Model API** and click **Test connection** to see the raw response."
     ),
     "settings.tab.api": "Model API",
@@ -256,12 +282,26 @@ _EN: Dict[str, str] = {
     "settings.api.provider.anthropic": "Anthropic Claude",
     "settings.api.base_url": "Base URL",
     "settings.api.api_key": "API Key",
-    "settings.api.model": "Model",
+    "settings.api.model": "Text model (text questions)",
+    "settings.api.vision_model": "Vision model (screenshots)",
+    "settings.api.vision_model_tip": (
+        "Screenshots go to the vision model, text questions to the text model. "
+        "Leave the vision model **empty** to use one model for both. "
+        "**Test connection** below checks both."
+    ),
     "settings.api.temperature": "Temperature",
     "settings.api.max_tokens": "Max output tokens",
+    "settings.api.max_tokens_auto": "Server default",
+    "settings.api.max_tokens_tip": (
+        "Too small an answer that gets cut off mid-sentence (and a reasoning model "
+        "spends the budget on thinking first, so the answer can come back empty). "
+        "The default is 4096 — enough for a full explanation or code block. "
+        "Set 0 for no cap of our own and let the server use its own maximum; "
+        "setting it above what the model allows makes the API reject the request."
+    ),
     "settings.api.stream": "Stream output (typewriter effect)",
     "settings.api.system_prompt": "System prompt",
-    "settings.api.tip": "Tip: screenshot Q&A requires a vision-capable model (gpt-4o / qwen-vl-max / glm-4v, etc.).",
+    "settings.api.tip": "Tip: screenshot Q&A needs a vision-capable model (gpt-4o / qwen-vl-max / glm-4v, etc.) — put it under **Vision model**.",
     "settings.preset.hint": "These buttons appear on the panel; clicking one runs its instruction against the current selection.",
     "settings.preset.col_name": "Button label",
     "settings.preset.col_prompt": "Instruction sent to the model",
@@ -273,6 +313,15 @@ _EN: Dict[str, str] = {
     "settings.appearance.language_note": "The language change applies after saving; presets are stored per language.",
     "settings.appearance.opacity": "Panel opacity",
     "settings.appearance.font_size": "Font size",
+    "settings.appearance.image_preview": "Screenshot size",
+    "settings.appearance.image_preview.small": "Small (240 px wide)",
+    "settings.appearance.image_preview.medium": "Medium (320 px wide, default)",
+    "settings.appearance.image_preview.large": "Large (400 px wide, the ceiling)",
+    "settings.appearance.image_preview_tip": (
+        "A screenshot is context for the question, so the preview is capped at 400 px "
+        "wide — no setting can make it wider — and the height follows the aspect ratio. "
+        "Changing this makes the panel settle into its new size once."
+    ),
     "settings.appearance.reset_size": "Reset panel size",
     "settings.appearance.size_saved": "Remembered size: {width} × {height}",
     "settings.appearance.size_default": "Using the default size",
@@ -315,12 +364,13 @@ _EN: Dict[str, str] = {
     "llm.error.reasoning_only": (
         "The model only produced reasoning and no answer — usually because "
         "**max_tokens is too small** and the output got truncated.\n"
-        "Go to Settings → Model API, raise **Max output tokens** (e.g. 4000) and retry.\n\n"
+        "Go to Settings → Model API, raise **Max output tokens** (8000, say), or set "
+        "it to 0 to let the server decide, and retry.\n\n"
         "Reasoning (excerpt):\n{reasoning}"
     ),
     "llm.error.unknown": "Unknown error",
     "llm.error.anthropic_stream": "The server did not return streaming data. Raw response:\n{body}",
-    "llm.error.http": "Request failed {status} {hint}\n{detail}",
+    "llm.error.http": "Request failed {status} {hint}\nModel: {model}\n{detail}",
     "llm.hint.401": "(invalid or missing API Key — check Settings)",
     "llm.hint.403": "(no permission — check the model name or account access)",
     "llm.hint.404": "(endpoint or model not found — check Base URL)",
@@ -330,6 +380,10 @@ _EN: Dict[str, str] = {
     "llm.test.ok": "Success: {text}",
     "llm.test.fail": "Failed: {text}",
     "llm.test.empty": "(empty reply)",
+    "llm.test.line": "{label}: {result}",
+    "llm.test.text_label": "Text model",
+    "llm.test.vision_label": "Vision model",
+    "llm.test.vision_same": "{label}: not set separately — the same as the text model",
 }
 
 _TABLES: Dict[str, Dict[str, str]] = {ZH: _ZH, EN: _EN}

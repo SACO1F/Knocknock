@@ -25,6 +25,7 @@ The interface borrows macOS / iOS design language: a borderless rounded card, a 
 | Text-selection Q&A | Select text with the mouse in any application, press **Ctrl twice**, and the panel opens with the selection loaded |
 | Double-Ctrl toggle | When the panel is already open, **pressing Ctrl twice again hides it**. You can turn this off in Settings and go back to "always re-read the selection" |
 | Screenshot region | **Ctrl + Alt + A** (or the tray menu) opens a full-screen overlay; drag to select any region, with a pixel magnifier and live size readout |
+| Screenshot sizing | The panel grows around the captured picture instead of squeezing it — but the preview is **capped at 400 px wide** (default 320 px), with small / medium / large under Settings → Appearance |
 | Prompt input | Type freely in the panel's input box, or click a preset chip (Translate / Explain / Summarize / Polish / Explain code) |
 | Follow-up questions | Keep asking about the same selection; the conversation context is preserved |
 | Streaming answers | Text appears token by token and can be stopped at any time; results render Markdown and copy in one click |
@@ -33,7 +34,9 @@ The interface borrows macOS / iOS design language: a borderless rounded card, a 
 | Light / dark theme | One-click toggle in the title bar, or follow the system. Changing it in Settings previews live |
 | Always on top | The pin button in the title bar toggles it; the panel can be dragged anywhere |
 | Model backends | OpenAI-compatible protocol (OpenAI / DeepSeek / Qwen / Kimi / Zhipu / Ollama …) plus Anthropic Claude |
+| Separate text / vision models | Text questions and screenshots can use different models (`deepseek-chat` for text, `qwen-vl-max` for pictures); one model can still do both |
 | Vision Q&A | A screenshot is sent to the model as an image (gpt-4o, qwen-vl-max, glm-4v …) |
+| Generous output budget | 4096 output tokens by default, so long answers are not cut off mid-sentence; set it to 0 to let the server decide |
 
 ---
 
@@ -64,7 +67,9 @@ Double-click `run.bat` (it creates the virtual environment if needed, then start
 
 ### 2.3 Configure the API key
 
-On first launch, right-click the Knocknock icon in the system tray → **Settings…** → fill in `Base URL`, `API Key`, and `Model`, click **Test connection** to confirm, then save.
+On first launch, right-click the Knocknock icon in the system tray → **Settings…** → fill in `Base URL`, `API Key`, and the model(s), click **Test connection** to confirm, then save.
+
+There are two model fields: **Text model** for typed questions and **Vision model** for anything carrying a screenshot. Leave the vision model empty and one model does both jobs.
 
 You can also edit `config.json` directly with a text editor (it is generated on first run):
 
@@ -74,7 +79,9 @@ You can also edit `config.json` directly with a text editor (it is generated on 
     "provider": "openai",
     "base_url": "https://api.deepseek.com/v1",
     "api_key": "sk-your-key",
-    "model": "deepseek-chat"
+    "model": "deepseek-chat",
+    "vision_model": "qwen-vl-max",
+    "max_tokens": 4096
   }
 }
 ```
@@ -112,6 +119,7 @@ Reference values for common providers:
 | Click the tray icon | Show / hide the panel |
 | Tray menu → **Close panel** | Dismiss the floating panel |
 | Settings → Appearance → **Interface language** | Switch between Simplified Chinese and English (applies after saving) |
+| Settings → Appearance → **Screenshot size** | How wide the captured preview may be: small 240 px / medium 320 px / large 400 px (hard ceiling) |
 
 ---
 
@@ -133,7 +141,7 @@ Knocknock/
 │   └── make_icon.py           # Generates packaging\knocknock.ico from the vector icon
 ├── screenshots/               # Interface previews
 ├── tests/
-│   └── selftest.py            # Self-test script (15 groups, no network access)
+│   └── selftest.py            # Self-test script (18 groups, no network access)
 └── knocknock/
     ├── __init__.py            # Package version
     ├── i18n.py                # Chinese/English string tables + language state (t() / text())
@@ -180,8 +188,9 @@ To add a third language, add one dictionary in `i18n.py`, register it in `LANGUA
 
 After changing code, run the bundled self-test. It covers configuration, hotkey parsing, message
 construction, theming, the UI flow, screen capture, clipboard text grabbing, tray-icon uniqueness,
-panel resizing, shadows and tooltips, the Chinese/English switch, the pinned header, and double-Ctrl
-closing — plus LLM calls against a local mock server, so no quota is consumed:
+panel resizing, shadows and tooltips, the Chinese/English switch, the pinned header, double-Ctrl
+closing, screenshot growth, the output token budget and the text/vision model split — plus LLM calls
+against a local mock server, so no quota is consumed:
 
 ```bash
 .venv\Scripts\python.exe tests\selftest.py
@@ -198,7 +207,13 @@ Expected output:
 --- 15. Pinned header and double-Ctrl closing ---
   [pass] header stays at the top (does not move when the window grows)
   [pass] double-Ctrl toggles the panel + tray close entry
-Passed 17, failed 0
+--- 16. Screenshot growth ---
+  [pass] a new picture grows the panel into view step by step
+--- 17. Output token budget ---
+  [pass] default is generous / 0 means server decides / nonsense is repaired
+--- 18. Text / vision model split ---
+  [pass] screenshots use the vision model / preview tiers are respected
+Passed 21, failed 0
 All self-tests passed.
 ```
 
@@ -268,6 +283,30 @@ The fix wraps the entire top block (title bar / context / preset chips / input /
 **12. Why make double-Ctrl a toggle?**
 The double-press detection in `hotkey.py` (`GlobalInput.double_ctrl`) is global by nature and does not know whether the panel is visible, so "closing" is merely a branch in the main thread: if the panel is visible → `hide_panel()`; otherwise → grab the selection and open the panel as usual. It is a setting (`behavior.toggle_on_double_ctrl`) rather than hard-coded behavior because "double-Ctrl re-reads the selection" is a legitimate workflow for people who select text repeatedly — both habits are supported, with close-on-double-Ctrl on by default.
 
+**13. How does the panel grow around a screenshot?**
+The panel is sized *from* the picture, not the other way round. `_image_display_size()` fits the picture into a preferred box — **small / medium / large** under Settings → Appearance, `medium` (320 px wide) by default — and only then does `_start_reveal()` animate a single 0→1 progress value, re-deriving the picture size, the context block and the window around it on every frame. Three things are worth knowing:
+
+- **The width has a hard ceiling of 400 px** (`IMAGE_MAX_WIDTH`), applied after the tier lookup and again in `_image_box()`. A screenshot is context for the question, not an image viewer: the first version sized the preview from the picture's own resolution, which turned a capture into a 1094 px-wide window across half the desktop. The ceiling is enforced in code rather than by picking small numbers, so no tier — and no hand-edited `config.json` — can creep past it.
+- **The box, not just a height cap.** A height-only limit lets a wide capture keep its full width and leaves the panel as a mostly empty frame; a tall one then has to be squeezed by the width instead. The preference is a box, and the picture is scaled down to fit inside it (never up, except to `IMAGE_MIN_WIDTH` so a tiny capture stays legible).
+- **The chrome height is computed from layout constants, not measured.** If it were measured from the current window it would depend on the panel's own size, and the first estimate would feed back into itself (the panel grows → the chips re-wrap → the estimate changes → the panel grows again). The chrome figure is also what caps the preview on a short screen, so the panel can never grow past the bottom edge of the display.
+- **The picture is scaled once, up front.** The full-resolution screenshot is baked down to its final display size, and the animation only re-scales that already-small pixmap — which is what keeps an animated resize affordable (measured: ~9 ms per frame including the repaint and the shadow, so a 760 ms animation has plenty of headroom).
+
+The window is only ever as small as its content: the interpolation is clamped by `layout().minimumSize()` on every frame, so the picture can never be clipped mid-animation, and `_clamp_to_screen()` moves the panel up as it grows downwards. The panel also narrows again for a small picture — "fit the window to the picture" cuts both ways, and a 2235 px-wide panel showing a 200 px thumbnail looks broken. Changing the preview size in Settings re-fits a picture that is already on screen, with the same animation.
+
+One rule keeps this from being annoying: **a picture-fitted size is never remembered as the user's own.** `_remember_size()` saves the size on hide only while `_user_size` (the size the user actually dragged out) still matches the window; otherwise a single capture would silently redefine the panel size that gets restored on the next launch.
+
+**14. Why is the output token budget 4096 by default?**
+1200 was too small: long explanations were cut off mid-sentence, and a reasoning model spends the budget on `reasoning_content` before it writes any answer — which is why a truncated reasoning model produced a *completely empty* reply. 4096 is the largest cap every mainstream provider accepts, so it is a safe default, and setting the field to 0 drops `max_tokens` from the request entirely so the provider applies its own maximum. Anthropic is the exception: it rejects a request without `max_tokens`, so "auto" resolves to 8192 there. A value still sitting on the old 1200 default is lifted automatically in `config._normalize()`, on the same principle as the system prompt (that value was never chosen by the user, it was the built-in default).
+
+**15. How are the text and vision models kept apart?**
+`resolve_model(api_cfg, messages)` in `llm.py` scans the outgoing messages for an `image_url` block. If one is there and `api.vision_model` is set, that model is used; otherwise `api.model` handles it. Three details:
+
+- **The decision is made from the messages, not from a flag the caller passes.** The panel builds the message list, but the worker is also used by the connection test, and a rule that lives in one place cannot drift between callers.
+- **An empty vision model means "same as the text model",** which is exactly how the app behaved before the two fields existed — so an old `config.json` keeps working with no migration.
+- **The failing model is named in HTTP errors.** `"404"` is nearly always a typo in a model name, and once two models are configured you want to know which one was asked for; `llm.error.http` therefore carries the resolved model name.
+
+**Test connection** probes both models (two cheap 32-token calls) and reports them on separate lines, so a typo in the vision model surfaces when you save the settings rather than the first time you capture a region.
+
 ---
 
 ## 8. FAQ
@@ -279,7 +318,7 @@ A: In rare cases security software blocks the keyboard hook. Change the "Read se
 A: The target application did not respond to Ctrl+C (PDF readers and image viewers often behave this way). Use **Ctrl+Alt+A** to capture a region and a vision model instead.
 
 **Q: The model says it cannot see the image I sent.**
-A: The current model does not support vision. Switch to a multimodal model such as `gpt-4o`, `qwen-vl-max`, or `glm-4v`.
+A: Screenshots go to the **Vision model** field (Settings → Model API); if that is empty they go to the text model, which usually cannot see pictures. Put a multimodal model there — `gpt-4o`, `qwen-vl-max`, `glm-4v` — and click **Test connection**, which checks both models.
 
 **Q: After switching to English, the preset chips are still Chinese.**
 A: `presets` and `presets_en` are two independent settings. If you previously edited the presets in the Chinese interface, only `presets` changed; `presets_en` still holds the built-in English defaults. Both can be edited separately under Settings → Presets in the matching language.
@@ -295,8 +334,20 @@ A: That was a bug in v1.0 (the tray icon was recreated by mistake when settings 
 However, **leftover zombie icons do not disappear on their own** — quit Knocknock and start it again to clear them.
 If a new icon still appears on every settings save after a restart, you are running old code; pull the latest version.
 
+**Q: The answer stops in the middle of a sentence.**
+A: The output token budget was reached. Settings → Model API → **Max output tokens** is 4096 by default; raise it, or set it to 0 to let the server apply its own maximum. Note that reasoning models spend part of that budget on thinking first, so they need more than a plain chat model. Setting it *above* what the model allows makes the API reject the request outright, so do not simply put in a huge number.
+
+**Q: The panel resized itself after I captured a region.**
+A: That is deliberate: the panel grows around the captured picture so the screenshot is actually readable, and narrows again for a small one. The preview is kept small on purpose — a screenshot is context for the question, not an image viewer — and its width is **capped at 400 px**: Settings → Appearance → **Screenshot size** switches between small (240 px), medium (320 px, the default) and large (400 px). Dragging an edge or the corner still overrides the panel size, and the size you chose is remembered.
+
+**Q: Can I make the screenshot preview bigger?**
+A: Up to 400 px wide, no further — that is a hard ceiling in the code, not just the default. Above that the preview stops being a preview and starts taking over the desktop, which is what the panel is meant to avoid.
+
+**Q: Can text questions and screenshots use different models?**
+A: Yes. Settings → Model API has a **Text model** and a **Vision model**; a screenshot always goes to the vision model, everything else to the text model. Leave the vision model empty to use one model for both (which is how earlier versions worked, so an existing `config.json` needs no changes).
+
 **Q: The panel cannot be shrunk, or its size resets on the next launch.**
-A: The panel cannot be dragged smaller than its content (the chips would be clipped); the minimum size is derived from the layout. A size you dragged to is remembered.
+A: The panel cannot be dragged smaller than its content (the chips would be clipped); the minimum size is derived from the layout. A size you dragged to is remembered — but a size the panel took by itself (fitting a screenshot) is not, so capturing a region never redefines the size your panel opens with.
 If you changed "Initial panel width" in Settings, the size is reset to the default and recomputed.
 
 **Q: I switched to the dark theme but the tray menu is still light.**
@@ -347,6 +398,7 @@ run it directly; `config.json` is created next to the executable on first launch
 
 | Version | Changes |
 | --- | --- |
+| 1.3.0 | Screenshots **grow the panel**: the window animates open around the captured picture instead of squeezing it into a fixed 150 px strip, with the preview **capped at 400 px wide** (240 / 320 / 400 under Appearance) and a size the panel fits itself to never being remembered as the user's own. **Text and vision models are now separate settings** (an empty vision model keeps the old single-model behaviour), and **Test connection** checks both. The default **max output tokens went from 1200 to 4096** (0 now means "let the server decide"), and configs still sitting on the old 1200 default are lifted automatically |
 | 1.2.0 | The title bar (navigation bar) is now pinned to the top of the panel instead of drifting with window height; **double Ctrl now closes the panel** (can be disabled under Settings → Behavior); the tray menu gained a **Close panel** entry |
 | 1.1.0 | The project was renamed to **Knocknock**; added the Chinese/English interface switch (panel, tray, settings, capture hints, and model errors all covered, with presets stored per language) |
 | 1.0.0 | First release (originally named Knock): text-selection Q&A, screenshot region capture, streaming answers, follow-up questions, light / dark themes |

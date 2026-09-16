@@ -18,6 +18,9 @@ Covers:
  13. Drag-to-resize (hot zones on the card) + the result area is not clipped after a manual resize
  14. Chinese/English switching (string tables / panel and tray retranslation / per-language presets)
  15. Pinned header and double-Ctrl close (title bar does not drift / double-tap Ctrl toggles the panel)
+ 16. Screenshot growth (a new picture grows the panel into view step by step, and it fits on screen)
+ 17. Output token budget (the default is large enough; 0 means "let the server decide")
+ 18. Text / vision model split (screenshots use the vision model; the preview box is respected)
 
 Group 9 briefly creates one tray icon (hidden again when the test ends); no other
 case disturbs the desktop. The whole self-test redirects config writes to a
@@ -63,6 +66,7 @@ from PySide6.QtCore import (  # noqa: E402
     QPoint,
     QPointF,
     QRect,
+    QSize,
     QTimer,
     Qt,
 )
@@ -495,7 +499,7 @@ def _run_worker(app, cfg, messages, stop_after_ms=None):
 
 
 def t_llm(app) -> None:
-    from knocknock.llm import build_user_content
+    from knocknock.llm import ANTHROPIC_DEFAULT_MAX_TOKENS, build_user_content
 
     server = HTTPServer(("127.0.0.1", 0), _MockHandler)
     port = server.server_address[1]
@@ -565,6 +569,24 @@ def t_llm(app) -> None:
         box = _run_worker(app, base, [{"role": "user", "content": "hi"}])
         assert box["err"] and "max_tokens" in box["err"], (
             f"no clear hint was given when only reasoning arrived: {box['err']!r}"
+        )
+
+        # --- Output token budget: 0 means "let the server decide" -> send no cap at all
+        _MockHandler.mode = "ok"
+        _run_worker(app, dict(base, max_tokens=0), [{"role": "user", "content": "hi"}])
+        assert "max_tokens" not in _MockHandler.record[-1]["body"], (
+            "max_tokens=0 should leave the field out so the provider applies its own maximum"
+        )
+
+        _run_worker(app, dict(base, max_tokens=8000), [{"role": "user", "content": "hi"}])
+        assert _MockHandler.record[-1]["body"]["max_tokens"] == 8000
+
+        # Anthropic rejects a request without max_tokens, so "auto" has to resolve
+        # to a concrete number there.
+        _run_worker(app, dict(base, provider="anthropic", max_tokens=0),
+                    [{"role": "user", "content": "hi"}])
+        assert _MockHandler.record[-1]["body"]["max_tokens"] == ANTHROPIC_DEFAULT_MAX_TOKENS, (
+            _MockHandler.record[-1]["body"]["max_tokens"]
         )
     finally:
         server.shutdown()
@@ -1278,6 +1300,287 @@ def t_double_ctrl_closes() -> None:
         controller.overlay.deleteLater()
 
 
+# ==================================================================== 16 screenshot growth
+def t_screenshot_growth() -> None:
+    """A new screenshot must grow the panel into view step by step, not in one jump.
+
+    Historic behaviour: the picture was squeezed into a fixed 150px strip and the
+    window never changed size at all, so capturing a region produced a thumbnail
+    too small to read.
+    """
+    from knocknock.config import load_config
+    from knocknock.panel import CONTEXT_MAX_HEIGHT, IMAGE_PREVIEW_BOXES, KnockPanel
+
+    app = QApplication.instance()
+    cfg = load_config()
+    cfg["ui"]["theme"] = "light"
+    cfg["ui"]["width"] = 520
+    cfg["ui"]["min_width"] = 420
+    cfg["ui"]["image_preview"] = "large"
+    cfg["ui"].pop("last_size", None)
+
+    panel = KnockPanel(cfg)
+    panel.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    # The real screen is whatever this machine has; a fixed 1920x1040 makes the
+    # expectations (and therefore the failures) reproducible.
+    screen = QRect(0, 0, 1920, 1040)
+    panel._screen_available = lambda: screen
+    panel.show()
+    app.processEvents()
+    compact = panel.height()
+
+    image = QPixmap(1200, 800)
+    image.fill(QColor("#3A7BD5"))
+    panel.set_context(image=image, source="screenshot")
+    app.processEvents()
+
+    assert panel._animating, "a freshly captured screenshot should start the growth animation"
+    target = panel._image_target
+    assert not target.isEmpty(), "no display size was worked out for the screenshot"
+    box = IMAGE_PREVIEW_BOXES["large"]
+    assert target.width() <= box.width() and target.height() <= box.height(), (
+        f"the picture ignores the preview box: {target} > {box}"
+    )
+    opening = panel.height()
+    assert opening < compact + target.height(), (
+        "the window jumped to its final size instead of growing into it"
+    )
+
+    frames: list = []
+    deadline = time.time() + 5.0
+    while panel._animating and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.02)
+        frames.append((panel.width(), panel.height(), panel.context_image.height()))
+
+    assert not panel._animating, "the growth animation never finished"
+    distinct = {(w, h) for w, h, _ in frames}
+    assert len(distinct) >= 5, f"the window did not grow gradually: only {len(distinct)} sizes seen"
+    assert panel.height() > opening, (
+        f"the window never actually grew for the picture: {opening} -> {panel.height()}"
+    )
+
+    heights = [h for _, _, h in frames]
+    assert heights == sorted(heights), f"the picture grew in fits and starts: {heights}"
+    assert heights[-1] == target.height(), (heights[-1], target.height())
+
+    # The finished panel really does contain the picture...
+    assert panel.context_frame.height() >= target.height(), (
+        f"the context block is smaller than the picture: {panel.context_frame.height()} < {target.height()}"
+    )
+    assert panel.context_image.width() == target.width()
+    assert panel.height() >= compact, "the panel should be at least as large as it was"
+    # ...it still fits the screen...
+    assert panel.y() + panel.height() <= screen.bottom() + 1, "the grown panel runs off the screen"
+    assert panel.x() + panel.width() <= screen.right() + 1
+    # ...and nothing is clipped.
+    assert panel.card.rect().contains(panel.context_image.geometry()), (
+        f"the picture is clipped by the card: {panel.context_image.geometry()} not inside {panel.card.rect()}"
+    )
+    assert panel.height() >= panel.layout().minimumSize().height()
+
+    # A second capture re-runs the growth (it must not be a one-shot)
+    panel.set_context(image=QPixmap(600, 900), source="screenshot")
+    app.processEvents()
+    assert panel._animating, "the second screenshot did not animate either"
+    panel._cancel_reveal()
+
+    # A text context is not animated and releases the picture block again
+    panel.set_context(text="plain selected text")
+    app.processEvents()
+    assert not panel._animating
+    assert panel._image_target.isEmpty(), "the picture block was not released"
+    assert panel.context_frame.maximumHeight() == CONTEXT_MAX_HEIGHT
+    assert panel.context_frame.isVisible() and panel.context_image.isHidden()
+    assert panel.width() >= panel._min_width()
+
+    # A size the panel took by itself (to fit a picture) must never be remembered
+    # as the size the user chose — otherwise one capture silently redefines it.
+    remembered: list = []
+    panel.size_changed.connect(lambda w, h: remembered.append((w, h)))
+
+    panel._user_resized = True
+    panel._user_size = QSize(900, 700)
+    panel.hide_panel()
+    assert not remembered, "the picture-fitted size was saved as if the user had dragged it"
+
+    panel.resize(900, 700)
+    panel.show()
+    panel.hide_panel()
+    assert remembered and remembered[-1] == (900, 700), remembered
+
+    panel.deleteLater()
+
+
+# ==================================================================== 17 token budget
+def t_token_budget() -> None:
+    """The output token budget must default high enough, and 0 must mean "server decides"."""
+    from knocknock.config import (
+        DEFAULT_CONFIG,
+        DEFAULT_MAX_TOKENS,
+        MAX_TOKENS_LIMIT,
+        _normalize,
+    )
+    from knocknock.llm import LLMWorker, configured_max_tokens
+
+    assert DEFAULT_CONFIG["api"]["max_tokens"] == DEFAULT_MAX_TOKENS == 4096, (
+        "the built-in output budget is too small again"
+    )
+
+    # A config still sitting on the old default never chose it -> lifted to the new one
+    cfg = {"api": {"max_tokens": 1200}, "ui": {"language": "zh"}}
+    _normalize(cfg)
+    assert cfg["api"]["max_tokens"] == DEFAULT_MAX_TOKENS, cfg["api"]["max_tokens"]
+
+    # A deliberate value survives; nonsense is repaired instead of crashing the request
+    for value, expected in ((8000, 8000), (0, 0), ("bad", DEFAULT_MAX_TOKENS),
+                            (10 ** 9, MAX_TOKENS_LIMIT), (-5, 0)):
+        cfg = {"api": {"max_tokens": value}, "ui": {"language": "zh"}}
+        _normalize(cfg)
+        assert cfg["api"]["max_tokens"] == expected, (value, cfg["api"]["max_tokens"])
+
+    assert configured_max_tokens({}) == DEFAULT_MAX_TOKENS
+    assert configured_max_tokens({"max_tokens": "2048"}) == 2048
+    assert "max_tokens" not in LLMWorker({"max_tokens": 0, "model": "m"}, [])._openai_payload()
+    assert LLMWorker({"max_tokens": 6000, "model": "m"}, [])._openai_payload()["max_tokens"] == 6000
+
+
+# ==================================================================== 18 text / vision models
+def t_model_split() -> None:
+    """Screenshots go to the vision model, everything else to the text model."""
+    from knocknock.config import DEFAULT_CONFIG, IMAGE_PREVIEWS, _normalize
+    from knocknock.llm import (
+        LLMWorker,
+        build_user_content,
+        messages_have_image,
+        resolve_model,
+        test_connection,
+    )
+    from knocknock.panel import IMAGE_PREVIEW_BOXES, KnockPanel
+
+    assert DEFAULT_CONFIG["api"]["vision_model"] == ""
+    assert DEFAULT_CONFIG["ui"]["image_preview"] == "medium"
+
+    text_only = [{"role": "user", "content": "just text"}]
+    with_image = [{"role": "user", "content": build_user_content(
+        {"text": "", "image_png": b"\x89PNG", "source": "screenshot"}, "what is this")}]
+
+    assert not messages_have_image(text_only)
+    assert messages_have_image(with_image)
+
+    cfg = {"model": "deepseek-chat", "vision_model": "qwen-vl-max"}
+    assert resolve_model(cfg, text_only) == "deepseek-chat"
+    assert resolve_model(cfg, with_image) == "qwen-vl-max"
+
+    # An empty vision model keeps the old single-model behaviour
+    assert resolve_model({"model": "deepseek-chat"}, with_image) == "deepseek-chat"
+    assert resolve_model({"model": "deepseek-chat", "vision_model": "  "}, with_image) == "deepseek-chat"
+    # ... and a config with no model at all still gets a usable default
+    assert resolve_model({}, with_image) == "gpt-4o-mini"
+    assert resolve_model({"provider": "anthropic"}, with_image) == "gpt-4o-mini"
+
+    assert LLMWorker(cfg, text_only)._openai_payload()["model"] == "deepseek-chat"
+    assert LLMWorker(cfg, with_image)._openai_payload()["model"] == "qwen-vl-max"
+
+    # A wrong vision model name must be visible in the error, not guessed at
+    err = LLMWorker(cfg, with_image)._describe_http_error(_FakeResponse(404, {"error": {"message": "nope"}}))
+    assert "qwen-vl-max" in err, f"the failing model is not named in the error: {err!r}"
+
+    # The connection test must cover both models
+    lines = test_connection(cfg).splitlines()
+    assert len(lines) == 2, lines
+    lines = test_connection({"model": "deepseek-chat", "vision_model": ""}).splitlines()
+    assert len(lines) == 2 and "deepseek-chat" not in lines[1], lines
+
+    # Preview tiers: the picture must respect the chosen box, and changing the
+    # preference re-fits a picture that is already on screen.
+    app = QApplication.instance()
+    panel_cfg = {"ui": {"image_preview": "medium", "width": 520, "min_width": 420, "language": "zh"},
+                 "api": {}, "hotkeys": {}, "behavior": {}, "presets": [], "presets_en": []}
+    _normalize(panel_cfg)
+    panel = KnockPanel(panel_cfg)
+    panel.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    panel._screen_available = lambda: QRect(0, 0, 1920, 1040)
+    panel.show()
+    app.processEvents()
+
+    # The width ceiling is the point of the whole thing: a screenshot is context, not
+    # something that takes over the desktop, and no tier may creep past it.
+    from knocknock.panel import IMAGE_MAX_WIDTH
+
+    assert IMAGE_MAX_WIDTH == 400, IMAGE_MAX_WIDTH
+    assert all(box.width() <= IMAGE_MAX_WIDTH for box in IMAGE_PREVIEW_BOXES.values())
+
+    image = QPixmap(3840, 2160)          # deliberately huge, both dimensions
+    image.fill(QColor("#3A7BD5"))
+    sizes = {}
+    for tier in IMAGE_PREVIEWS:
+        panel_cfg["ui"]["image_preview"] = tier
+        panel.apply_config(panel_cfg)
+        panel.set_context(image=image, source="screenshot")
+        app.processEvents()
+        panel._cancel_reveal()
+        target = QSize(panel._image_target)
+        assert target.width() <= IMAGE_MAX_WIDTH, (tier, target)
+        assert target.width() <= IMAGE_PREVIEW_BOXES[tier].width(), (tier, target)
+        assert target.height() <= IMAGE_PREVIEW_BOXES[tier].height(), (tier, target)
+        assert panel._image_box().width() <= IMAGE_MAX_WIDTH
+        sizes[tier] = target
+
+    assert (sizes["small"].width() < sizes["medium"].width() < sizes["large"].width()), sizes
+    assert sizes["small"].height() < sizes["large"].height(), sizes
+
+    # Even a hand-edited config cannot push it past the ceiling
+    panel_cfg["ui"]["image_preview"] = "large"
+    panel.apply_config(panel_cfg)
+    assert panel._image_box().width() <= IMAGE_MAX_WIDTH
+    panel._cancel_reveal()
+
+    # A nonsense value falls back to the default instead of breaking the layout
+    for bad in ("", None, "enormous", 42):
+        panel_cfg["ui"]["image_preview"] = bad
+        _normalize(panel_cfg)
+        assert panel_cfg["ui"]["image_preview"] == "medium", bad
+    assert set(IMAGE_PREVIEW_BOXES) == set(IMAGE_PREVIEWS)
+    assert IMAGE_PREVIEW_BOXES["small"].height() < IMAGE_PREVIEW_BOXES["large"].height()
+
+    panel.deleteLater()
+
+    # Both fields must be editable and readable back through Settings
+    from knocknock.settings_dialog import SettingsDialog
+
+    dialog_cfg = {
+        "api": {"model": "text-model", "vision_model": "vision-model"},
+        "ui": {"image_preview": "small", "language": "zh"},
+        "hotkeys": {}, "behavior": {}, "presets": [], "presets_en": [],
+    }
+    _normalize(dialog_cfg)
+    dialog = SettingsDialog(dialog_cfg)
+    assert dialog.vision_model_edit.text() == "vision-model"
+    assert dialog.image_preview_box.currentData() == "small"
+    assert dialog._collect()["api"]["vision_model"] == "vision-model"
+    assert dialog._collect()["ui"]["image_preview"] == "small"
+
+    dialog.vision_model_edit.setText("other-vision")
+    dialog.image_preview_box.setCurrentIndex(dialog.image_preview_box.findData("large"))
+    collected = dialog._collect()
+    assert collected["api"]["vision_model"] == "other-vision", collected["api"]
+    assert collected["ui"]["image_preview"] == "large", collected["ui"]
+    dialog.deleteLater()
+
+
+class _FakeResponse:
+    """Minimal stand-in for a requests response, for the error-formatting path."""
+
+    def __init__(self, status_code: int, body: dict) -> None:
+        self.status_code = status_code
+        self._body = body
+        self.text = json.dumps(body)
+
+    def json(self) -> dict:
+        return self._body
+
+
 # ==================================================================== main
 def main() -> int:
     app = QCoreApplication.instance() or QApplication(sys.argv)
@@ -1334,6 +1637,15 @@ def main() -> int:
     section("15. Pinned header and double-Ctrl close")
     case("title bar stays pinned (no drift as the window grows)", t_header_pinned)
     case("double-tap Ctrl toggles the panel + tray close entry", t_double_ctrl_closes)
+
+    section("16. Screenshot growth")
+    case("a new picture grows the panel into view step by step", t_screenshot_growth)
+
+    section("17. Output token budget")
+    case("default is generous / 0 means server decides / nonsense is repaired", t_token_budget)
+
+    section("18. Text / vision model split")
+    case("screenshots use the vision model / preview tiers are respected", t_model_split)
 
     print("\n" + "=" * 56)
     print(f"Passed {len(PASSED)}, failed {len(FAILED)}")
