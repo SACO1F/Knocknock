@@ -36,4 +36,6 @@ exit /b 0
 :error
 echo.
 echo [X] Build failed. See the output above for details.
+REM Keep the window open so the error is readable when double-clicked.
+pause
 exit /b 1
