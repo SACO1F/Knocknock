@@ -26,8 +26,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Ada-Junk/Knocknock"
-Source = "https://github.com/Ada-Junk/Knocknock"
+Homepage = "https://github.com/SACO1F/Knocknock"
+Source = "https://github.com/SACO1F/Knocknock"
 
 [tool.setuptools]
 packages = ["knocknock"]
