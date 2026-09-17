@@ -97,6 +97,14 @@ _KNOWN_SYSTEM_PROMPTS = {
     ),
 }
 
+# Keys that were renamed. The double-tap trigger moved from Ctrl to Alt (Ctrl was
+# too easy to fire by accident while multi-selecting files), and the settings
+# went with it.
+_KEY_ALIASES = (
+    ("hotkeys", "double_ctrl_interval_ms", "double_alt_interval_ms"),
+    ("behavior", "toggle_on_double_ctrl", "toggle_on_double_alt"),
+)
+
 DEFAULT_CONFIG: Dict[str, Any] = {
     "api": {
         "provider": "openai",
@@ -124,7 +132,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "last_size": None,     # size the user dragged out, reused on next launch
     },
     "hotkeys": {
-        "double_ctrl_interval_ms": 420,
+        "double_alt_interval_ms": 420,
         "screenshot": "ctrl+alt+a",
         "ask_selection": "ctrl+alt+q",
     },
@@ -133,7 +141,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "restore_clipboard": False,
         "auto_send_on_preset": True,
         "close_on_esc": True,
-        "toggle_on_double_ctrl": True,   # double Ctrl closes the panel while it is open
+        "toggle_on_double_alt": True,   # double Alt closes the panel while it is open
         "max_history_turns": 6,
     },
     "presets": PRESETS_ZH,
@@ -162,6 +170,24 @@ def _read_json(path: Path) -> Dict[str, Any]:
         return data if isinstance(data, dict) else {}
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+def _rename_legacy_keys(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Move values off renamed keys onto their current names, in a raw config file.
+
+    This has to run *before* the merge with DEFAULT_CONFIG. Afterwards the
+    defaults have already supplied the new keys, and a value the user picked is
+    indistinguishable from one the defaults filled in — a config carrying
+    ``double_ctrl_interval_ms: 500`` would silently fall back to the default
+    420 ms. Renaming first means the user's own tuning survives.
+    """
+    result = copy.deepcopy(raw)
+    for section, old_key, new_key in _KEY_ALIASES:
+        node = result.get(section)
+        if isinstance(node, dict) and old_key in node:
+            value = node.pop(old_key)
+            node.setdefault(new_key, value)
+    return result
 
 
 def _normalize(cfg: Dict[str, Any]) -> None:
@@ -202,9 +228,9 @@ def load_config() -> Dict[str, Any]:
     """Load the config, filling in anything missing."""
     cfg = copy.deepcopy(DEFAULT_CONFIG)
     if EXAMPLE_PATH.exists():
-        cfg = _deep_merge(cfg, _read_json(EXAMPLE_PATH))
+        cfg = _deep_merge(cfg, _rename_legacy_keys(_read_json(EXAMPLE_PATH)))
     if CONFIG_PATH.exists():
-        cfg = _deep_merge(cfg, _read_json(CONFIG_PATH))
+        cfg = _deep_merge(cfg, _rename_legacy_keys(_read_json(CONFIG_PATH)))
     _normalize(cfg)
     return cfg
 

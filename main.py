@@ -4,10 +4,10 @@ Usage:
     python main.py
 
 Interaction:
-    1. Double-tap Ctrl      read the text selected on screen and open the
+    1. Double-tap Alt      read the text selected on screen and open the
                             instruction panel (closes it if already open)
     2. Ctrl + Alt + A       drag-select any region of the screen (screenshot)
-    3. Ctrl + Alt + Q       same as "double-tap Ctrl"
+    3. Ctrl + Alt + Q       same as "double-tap Alt"
     4. Tray icon            entry point for everything, and for quitting
 
 The UI can be switched between Chinese and English from
@@ -46,17 +46,17 @@ class KnocknockController(QObject):
 
         i18n.set_language(self.cfg.get("ui", {}).get("language"))
 
-        # When the panel is open, does double-tapping Ctrl close it or re-read the
+        # When the panel is open, does double-tapping Alt close it or re-read the
         # selection? Default is to close.
-        self.toggle_on_double_ctrl = bool(
-            self.cfg.get("behavior", {}).get("toggle_on_double_ctrl", True)
+        self.toggle_on_double_alt = bool(
+            self.cfg.get("behavior", {}).get("toggle_on_double_alt", True)
         )
 
         self.panel = KnockPanel(self.cfg)
         self.overlay = ScreenOverlay()
 
         self.input_listener = GlobalInput(self)
-        self.input_listener.double_ctrl.connect(self.on_double_ctrl)
+        self.input_listener.double_alt.connect(self.on_double_alt)
         self.input_listener.hotkey.connect(self.on_hotkey)
 
         self.tray = self._build_tray()
@@ -130,7 +130,7 @@ class KnocknockController(QObject):
         menu.addAction(action_shot)
 
         action_ask = QAction(i18n.t("tray.menu.ask", hotkey=ask_hotkey), menu)
-        action_ask.triggered.connect(self.on_double_ctrl)
+        action_ask.triggered.connect(self.on_double_alt)
         menu.addAction(action_ask)
 
         menu.addSeparator()
@@ -171,7 +171,7 @@ class KnocknockController(QObject):
             "ask_selection": self.cfg.get("hotkeys", {}).get("ask_selection", ""),
         }
         self.input_listener.start(
-            interval_ms=int(self.cfg.get("hotkeys", {}).get("double_ctrl_interval_ms", 420)),
+            interval_ms=int(self.cfg.get("hotkeys", {}).get("double_alt_interval_ms", 420)),
             hotkeys={key: value for key, value in hotkeys.items() if value},
         )
 
@@ -183,15 +183,15 @@ class KnocknockController(QObject):
         if name == "screenshot":
             self.start_screenshot()
         elif name == "ask_selection":
-            self.on_double_ctrl()
+            self.on_double_alt()
 
     # ================================================================ selection
-    def on_double_ctrl(self) -> None:
-        """Double-tap Ctrl: close the panel if it is open, otherwise grab the selection and open it."""
+    def on_double_alt(self) -> None:
+        """Double-tap Alt: close the panel if it is open, otherwise grab the selection and open it."""
         if self.overlay.isVisible():
             return
 
-        if self.toggle_on_double_ctrl and self.panel.isVisible():
+        if self.toggle_on_double_alt and self.panel.isVisible():
             self.panel.hide_panel()
             return
 
@@ -236,8 +236,8 @@ class KnocknockController(QObject):
             # Switch language first, then theme: both rebuild the tray menu, and
             # the language has to come first.
             i18n.set_language(self.cfg.get("ui", {}).get("language"))
-            self.toggle_on_double_ctrl = bool(
-                self.cfg.get("behavior", {}).get("toggle_on_double_ctrl", True)
+            self.toggle_on_double_alt = bool(
+                self.cfg.get("behavior", {}).get("toggle_on_double_alt", True)
             )
             self.set_theme(self.cfg.get("ui", {}).get("theme", "light"), persist=False)
             self.panel.apply_config(self.cfg)

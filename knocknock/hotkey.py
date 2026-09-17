@@ -1,8 +1,12 @@
-"""Global input monitoring: double-tap Ctrl detection plus system-wide hotkey registration.
+"""Global input monitoring: double-tap Alt detection plus system-wide hotkey registration.
 
 Implementation: a low-level keyboard hook (WH_KEYBOARD_LL) together with
 RegisterHotKey, both running on a dedicated thread's message loop and reporting
 back to the main thread through Qt signals. No administrator rights required.
+
+The double-tap key is Alt rather than Ctrl: Ctrl is held for multi-selecting
+files in Explorer and for countless editing shortcuts, so a stray double tap is
+easy to produce by accident. A bare Alt tap is comparatively rare.
 """
 from __future__ import annotations
 
@@ -28,7 +32,9 @@ WM_SYSKEYUP = 0x0105
 WM_HOTKEY = 0x0312
 WM_QUIT = 0x0012
 
-VK_CONTROLS = {0x11, 0xA2, 0xA3}  # VK_CONTROL / LCONTROL / RCONTROL
+# VK_MENU / VK_LMENU / VK_RMENU. Both Alt keys count, which matches how the
+# Ctrl variant used to accept either one.
+VK_ALTS = {0x12, 0xA4, 0xA5}
 
 
 class KBDLLHOOKSTRUCT(ctypes.Structure):
@@ -67,12 +73,12 @@ class GlobalInput(QObject):
     """Global input listener.
 
     Signals:
-        double_ctrl()          -- Ctrl was tapped twice
+        double_alt()           -- Alt was tapped twice
         hotkey(name: str)      -- a named system hotkey was pressed; `name` is the
                                   name it was registered under
     """
 
-    double_ctrl = Signal()
+    double_alt = Signal()
     hotkey = Signal(str)
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
@@ -86,8 +92,8 @@ class GlobalInput(QObject):
         self._hook_proc = HOOKPROC(self._hook_callback)  # must stay referenced, or it gets GC'd
         self._running = False
 
-        # double-tap Ctrl state
-        self._pending_ctrl = False
+        # double-tap Alt state
+        self._pending_alt = False
         self._first_press = 0.0
         self._reset_timer: Optional[threading.Timer] = None
         self._lock = threading.Lock()
@@ -154,6 +160,8 @@ class GlobalInput(QObject):
             if n_code == 0:
                 info = ctypes.cast(l_param, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
                 injected = bool(info.flags & LLKHF_INJECTED)
+                # Alt combinations arrive as WM_SYSKEYDOWN, so both key-down
+                # messages have to be accepted here.
                 is_down = w_param in (WM_KEYDOWN, WM_SYSKEYDOWN)
                 if not injected and is_down:
                     self._on_key_down(int(info.vkCode))
@@ -163,20 +171,21 @@ class GlobalInput(QObject):
 
     def _on_key_down(self, vk: int) -> None:
         with self._lock:
-            if vk in VK_CONTROLS:
+            if vk in VK_ALTS:
                 now = time.monotonic()
-                if self._pending_ctrl and (now - self._first_press) <= self._interval:
-                    self._pending_ctrl = False
+                if self._pending_alt and (now - self._first_press) <= self._interval:
+                    self._pending_alt = False
                     self._cancel_reset_timer()
-                    self.double_ctrl.emit()
+                    self.double_alt.emit()
                 else:
-                    self._pending_ctrl = True
+                    self._pending_alt = True
                     self._first_press = now
                     self._schedule_reset_timer()
             else:
-                # Some other key was pressed -> this Ctrl was part of a combo,
-                # so it does not count as a double-tap.
-                self._pending_ctrl = False
+                # Some other key was pressed -> this Alt was part of a combo
+                # (Alt+Tab, Alt+F4, an Alt menu mnemonic), so it does not count
+                # as a double-tap.
+                self._pending_alt = False
 
     # ------------------------------------------------------------ internal timers
     def _schedule_reset_timer(self) -> None:
@@ -195,14 +204,14 @@ class GlobalInput(QObject):
 
     def _on_reset_timeout(self) -> None:
         with self._lock:
-            self._pending_ctrl = False
+            self._pending_alt = False
             self._reset_timer = None
 
     def reset_state(self) -> None:
         """Clear the double-tap detection state (used on hotkey reload or in tests)."""
         with self._lock:
             self._cancel_reset_timer()
-            self._pending_ctrl = False
+            self._pending_alt = False
             self._first_press = 0.0
 
     # ------------------------------------------------------------ live config updates

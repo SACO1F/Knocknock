@@ -17,7 +17,7 @@ Covers:
  12. The shadow is not cut by the window edge + tooltips follow the theme
  13. Drag-to-resize (hot zones on the card) + the result area is not clipped after a manual resize
  14. Chinese/English switching (string tables / panel and tray retranslation / per-language presets)
- 15. Pinned header and double-Ctrl close (title bar does not drift / double-tap Ctrl toggles the panel)
+ 15. Pinned header and double-Alt close (title bar does not drift / double-tap Alt toggles the panel)
  16. Screenshot growth (a new picture grows the panel into view step by step, and it fits on screen)
  17. Output token budget (the default is large enough; 0 means "let the server decide")
  18. Text / vision model split (screenshots use the vision model; the preview box is respected)
@@ -1165,7 +1165,7 @@ def t_i18n(app) -> None:
         i18n.set_language(original)
 
 
-# ==================================================================== 15 pinned header + double-Ctrl close
+# ==================================================================== 15 pinned header + double-Alt close
 def t_header_pinned() -> None:
     """The title bar must always stay at the top of the card and never move with the panel height.
 
@@ -1232,8 +1232,8 @@ def t_header_pinned() -> None:
     panel.deleteLater()
 
 
-def t_double_ctrl_closes() -> None:
-    """Double-tap Ctrl toggles the panel: close it if open, otherwise read the selection and open it."""
+def t_double_alt_closes() -> None:
+    """Double-tap Alt toggles the panel: close it if open, otherwise read the selection and open it."""
     import main as entry
 
     controller = entry.KnocknockController(QApplication.instance())
@@ -1245,22 +1245,22 @@ def t_double_ctrl_closes() -> None:
         original_capture = entry.capture_selection
         entry.capture_selection = lambda **kwargs: (captured.append(1), {"text": "selection"})[1]
         try:
-            # --- closed -> double-tap Ctrl opens it
+            # --- closed -> double-tap Alt opens it
             assert not panel.isVisible()
-            controller.on_double_ctrl()
+            controller.on_double_alt()
             app.processEvents()
-            assert panel.isVisible(), "double-tapping Ctrl while closed should open the panel"
+            assert panel.isVisible(), "double-tapping Alt while closed should open the panel"
             assert captured, "opening should read the selection once"
 
-            # --- open -> double-tap Ctrl closes it, without reading the selection again
+            # --- open -> double-tap Alt closes it, without reading the selection again
             captured.clear()
-            controller.on_double_ctrl()
+            controller.on_double_alt()
             app.processEvents()
-            assert not panel.isVisible(), "double-tapping Ctrl while open should close the panel"
+            assert not panel.isVisible(), "double-tapping Alt while open should close the panel"
             assert not captured, "closing should not read the selection again"
 
             # --- double-tap again -> opens again (a toggle, not one-shot)
-            controller.on_double_ctrl()
+            controller.on_double_alt()
             app.processEvents()
             assert panel.isVisible()
             assert captured, "reopening should still read the selection"
@@ -1270,25 +1270,25 @@ def t_double_ctrl_closes() -> None:
             assert not panel.isVisible(), "close_panel() should hide the panel"
 
             # --- with the toggle off, restore the old behaviour: double-tap re-reads while open
-            controller.toggle_on_double_ctrl = False
-            controller.on_double_ctrl()
+            controller.toggle_on_double_alt = False
+            controller.on_double_alt()
             app.processEvents()
             assert panel.isVisible()
             captured.clear()
-            controller.on_double_ctrl()
+            controller.on_double_alt()
             app.processEvents()
-            assert panel.isVisible(), "with the toggle off, double-tapping Ctrl must not close the panel"
-            assert captured, "with the toggle off, double-tapping Ctrl should re-read the selection"
+            assert panel.isVisible(), "with the toggle off, double-tapping Alt must not close the panel"
+            assert captured, "with the toggle off, double-tapping Alt should re-read the selection"
 
             # --- the config option must persist and be readable/writable from Settings
             from knocknock.config import DEFAULT_CONFIG
-            assert DEFAULT_CONFIG["behavior"]["toggle_on_double_ctrl"] is True
+            assert DEFAULT_CONFIG["behavior"]["toggle_on_double_alt"] is True
             from knocknock.settings_dialog import SettingsDialog
 
             dialog = SettingsDialog(controller.cfg)
-            assert dialog.toggle_ctrl_check.isChecked()
-            dialog.toggle_ctrl_check.setChecked(False)
-            assert dialog._collect()["behavior"]["toggle_on_double_ctrl"] is False
+            assert dialog.toggle_alt_check.isChecked()
+            dialog.toggle_alt_check.setChecked(False)
+            assert dialog._collect()["behavior"]["toggle_on_double_alt"] is False
             dialog.deleteLater()
         finally:
             entry.capture_selection = original_capture
@@ -1298,6 +1298,122 @@ def t_double_ctrl_closes() -> None:
         controller.tray.hide()
         panel.deleteLater()
         controller.overlay.deleteLater()
+
+
+def t_double_alt_detection() -> None:
+    """The hook logic must read two Alt taps as a double-tap, and Alt+key as a combo.
+
+    GlobalInput._on_key_down is driven directly, so no real keyboard hook is ever
+    installed and the test cannot leak a global hook onto the desktop.
+    """
+    from knocknock.hotkey import VK_ALTS, GlobalInput
+
+    # VK_MENU / VK_LMENU / VK_RMENU: both physical Alt keys count.
+    assert VK_ALTS == {0x12, 0xA4, 0xA5}, VK_ALTS
+
+    listener = GlobalInput()
+    fired: list = []
+    listener.double_alt.connect(lambda: fired.append(1))
+    listener._interval = 0.42
+    try:
+        # A single tap is not enough; the second one fires.
+        listener._on_key_down(0x12)
+        assert not fired, "one Alt tap must not fire"
+        listener._on_key_down(0x12)
+        assert len(fired) == 1, "two Alt taps within the window should fire once"
+
+        # The pair is consumed: a third tap starts over instead of firing again.
+        listener._on_key_down(0x12)
+        assert len(fired) == 1, "a third tap must not fire again"
+
+        # Alt + another key is a combination, not a double-tap.
+        listener.reset_state()
+        listener._on_key_down(0x12)   # Alt down
+        listener._on_key_down(0x09)   # Tab down -> Alt+Tab
+        listener._on_key_down(0x12)   # Alt again, but the pending state was cancelled
+        assert len(fired) == 1, "Alt+Tab must not be mistaken for a double-tap"
+
+        # Ctrl is no longer a trigger at all.
+        listener.reset_state()
+        listener._on_key_down(0x11)
+        listener._on_key_down(0x11)
+        assert len(fired) == 1, "Ctrl must no longer trigger the double-tap"
+
+        # Either physical Alt key may be paired with the other.
+        listener.reset_state()
+        listener._on_key_down(0xA4)   # left Alt
+        listener._on_key_down(0xA5)   # right Alt
+        assert len(fired) == 2, "left and right Alt should pair up"
+
+        # Two taps further apart than the interval do not count.
+        listener.reset_state()
+        listener._on_key_down(0x12)
+        listener._first_press -= 10.0   # pretend the first tap was long ago
+        listener._on_key_down(0x12)
+        assert len(fired) == 2, "taps outside the interval must not fire"
+    finally:
+        listener.reset_state()
+
+
+def t_config_key_migration() -> None:
+    """A config written before the Alt switch must keep the values the user chose.
+
+    The rename has to happen *before* the merge with DEFAULT_CONFIG. Afterwards
+    the defaults have already supplied the new keys, and a value the user picked
+    is indistinguishable from one the defaults filled in - a legacy
+    `double_ctrl_interval_ms: 500` would silently become the default 420 ms.
+    """
+    import json
+    import tempfile
+    from pathlib import Path
+
+    import knocknock.config as config_module
+    from knocknock.config import DEFAULT_CONFIG, _rename_legacy_keys
+
+    legacy = {
+        "hotkeys": {"double_ctrl_interval_ms": 500, "screenshot": "ctrl+alt+a"},
+        "behavior": {"toggle_on_double_ctrl": False, "close_on_esc": True},
+    }
+
+    migrated = _rename_legacy_keys(legacy)
+    assert migrated["hotkeys"]["double_alt_interval_ms"] == 500, migrated["hotkeys"]
+    assert "double_ctrl_interval_ms" not in migrated["hotkeys"], "the old key must be dropped"
+    assert migrated["behavior"]["toggle_on_double_alt"] is False, migrated["behavior"]
+    assert "toggle_on_double_ctrl" not in migrated["behavior"], "the old key must be dropped"
+
+    # Unrelated keys survive, and the input dict is copied rather than mutated.
+    assert migrated["hotkeys"]["screenshot"] == "ctrl+alt+a"
+    assert migrated["behavior"]["close_on_esc"] is True
+    assert "double_ctrl_interval_ms" in legacy["hotkeys"], "the caller's dict must not be modified"
+
+    # If both names are present the explicit new one wins.
+    both = {"hotkeys": {"double_alt_interval_ms": 300, "double_ctrl_interval_ms": 500}}
+    assert _rename_legacy_keys(both)["hotkeys"]["double_alt_interval_ms"] == 300
+
+    # The shipped defaults only know the new names.
+    assert "double_alt_interval_ms" in DEFAULT_CONFIG["hotkeys"]
+    assert "double_ctrl_interval_ms" not in DEFAULT_CONFIG["hotkeys"]
+    assert "toggle_on_double_alt" in DEFAULT_CONFIG["behavior"]
+    assert "toggle_on_double_ctrl" not in DEFAULT_CONFIG["behavior"]
+
+    # End to end: a legacy file on disk loads under the new names.
+    with tempfile.TemporaryDirectory() as tmp:
+        legacy_file = Path(tmp) / "config.json"
+        legacy_file.write_text(json.dumps(legacy), encoding="utf-8")
+
+        original_config = config_module.CONFIG_PATH
+        original_example = config_module.EXAMPLE_PATH
+        config_module.CONFIG_PATH = legacy_file
+        config_module.EXAMPLE_PATH = Path(tmp) / "no-such-example.json"
+        try:
+            cfg = config_module.load_config()
+            assert cfg["hotkeys"]["double_alt_interval_ms"] == 500, cfg["hotkeys"]
+            assert cfg["behavior"]["toggle_on_double_alt"] is False, cfg["behavior"]
+            assert "double_ctrl_interval_ms" not in cfg["hotkeys"]
+            assert "toggle_on_double_ctrl" not in cfg["behavior"]
+        finally:
+            config_module.CONFIG_PATH = original_config
+            config_module.EXAMPLE_PATH = original_example
 
 
 # ==================================================================== 16 screenshot growth
@@ -1593,6 +1709,7 @@ def main() -> int:
     section("1. Config loading and merging")
     case("config read / default fill-in / dotted lookup", t_config)
     case("frozen build stores config next to the executable", t_config_paths_frozen)
+    case("legacy Ctrl keys migrate to the Alt names", t_config_key_migration)
 
     section("2. Hotkey parsing")
     case("combo and function key parsing", t_hotkey_parse)
@@ -1634,9 +1751,10 @@ def main() -> int:
     section("14. Chinese / English switching")
     case("string tables / panel retranslation / per-language presets", lambda: t_i18n(app))
 
-    section("15. Pinned header and double-Ctrl close")
+    section("15. Pinned header and double-Alt close")
     case("title bar stays pinned (no drift as the window grows)", t_header_pinned)
-    case("double-tap Ctrl toggles the panel + tray close entry", t_double_ctrl_closes)
+    case("double-tap Alt toggles the panel + tray close entry", t_double_alt_closes)
+    case("Alt pair fires; Alt+key and Ctrl do not", t_double_alt_detection)
 
     section("16. Screenshot growth")
     case("a new picture grows the panel into view step by step", t_screenshot_growth)

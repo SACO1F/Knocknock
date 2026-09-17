@@ -1,6 +1,6 @@
 # Knocknock — Select text or grab a screenshot, ask a large language model
 
-A small Windows desktop utility: **select text anywhere on screen, or drag a box around a region, press Ctrl twice, type an instruction in plain language — the answer appears in a floating panel.**
+A small Windows desktop utility: **select text anywhere on screen, or drag a box around a region, press Alt twice, type an instruction in plain language — the answer appears in a floating panel.**
 
 The interface borrows macOS / iOS design language: a borderless rounded card, a soft drop shadow, system-blue accents, and rounded chip buttons. It supports always-on-top, free resizing, a **Chinese / English interface toggle**, and light / dark themes.
 
@@ -22,8 +22,8 @@ The interface borrows macOS / iOS design language: a borderless rounded card, a 
 
 | Capability | Description |
 | --- | --- |
-| Text-selection Q&A | Select text with the mouse in any application, press **Ctrl twice**, and the panel opens with the selection loaded |
-| Double-Ctrl toggle | When the panel is already open, **pressing Ctrl twice again hides it**. You can turn this off in Settings and go back to "always re-read the selection" |
+| Text-selection Q&A | Select text with the mouse in any application, press **Alt twice**, and the panel opens with the selection loaded |
+| Double-Alt toggle | When the panel is already open, **pressing Alt twice again hides it**. You can turn this off in Settings and go back to "always re-read the selection" |
 | Screenshot region | **Ctrl + Alt + A** (or the tray menu) opens a full-screen overlay; drag to select any region, with a pixel magnifier and live size readout |
 | Screenshot sizing | The panel grows around the captured picture instead of squeezing it — but the preview is **capped at 400 px wide** (default 320 px), with small / medium / large under Settings → Appearance |
 | Prompt input | Type freely in the panel's input box, or click a preset chip (Translate / Explain / Summarize / Polish / Explain code) |
@@ -105,10 +105,10 @@ Reference values for common providers:
 
 | Action | Effect |
 | --- | --- |
-| Select text, then press **Ctrl twice** | Read the selection and open the panel |
-| Press **Ctrl twice** while the panel is open | Hide the panel (can be disabled under Settings → Behavior) |
+| Select text, then press **Alt twice** | Read the selection and open the panel |
+| Press **Alt twice** while the panel is open | Hide the panel (can be disabled under Settings → Behavior) |
 | **Ctrl + Alt + A** | Enter screenshot-region mode |
-| **Ctrl + Alt + Q** | Same as pressing Ctrl twice |
+| **Ctrl + Alt + Q** | Same as pressing Alt twice |
 | **Enter** in the panel | Send |
 | **Shift + Enter** | New line |
 | **Esc** | Hide the panel / cancel a capture |
@@ -119,6 +119,15 @@ Reference values for common providers:
 | Click the tray icon | Show / hide the panel |
 | Tray menu → **Close panel** | Dismiss the floating panel |
 | Settings → Appearance → **Interface language** | Switch between Simplified Chinese and English (applies after saving) |
+
+> **Why Alt and not Ctrl?** Ctrl is held down to multi-select files in Explorer and for a great
+> many editing shortcuts, so a stray double press is easy to produce by accident. A bare Alt tap
+> is comparatively rare.
+>
+> The trade-off: Windows normally uses a lone Alt press to open an application's menu bar (the
+> system menu, or the ribbon in Explorer). Double-tapping Alt may therefore flash that menu.
+> Knocknock only observes the key — it never swallows it — so this cannot be suppressed without
+> breaking ordinary Alt usage everywhere.
 | Settings → Appearance → **Screenshot size** | How wide the captured preview may be: small 240 px / medium 320 px / large 400 px (hard ceiling) |
 
 ---
@@ -187,9 +196,9 @@ To add a third language, add one dictionary in `i18n.py`, register it in `LANGUA
 
 After changing code, run the bundled self-test. It covers configuration, hotkey parsing, message
 construction, theming, the UI flow, screen capture, clipboard text grabbing, tray-icon uniqueness,
-panel resizing, shadows and tooltips, the Chinese/English switch, the pinned header, double-Ctrl
-closing, screenshot growth, the output token budget and the text/vision model split — plus LLM calls
-against a local mock server, so no quota is consumed:
+panel resizing, shadows and tooltips, the Chinese/English switch, the pinned header, double-Alt
+closing and detection, screenshot growth, the output token budget and the text/vision model split —
+plus LLM calls against a local mock server, so no quota is consumed:
 
 ```bash
 .venv\Scripts\python.exe tests\selftest.py
@@ -203,16 +212,17 @@ Expected output:
 ...
 --- 14. Chinese/English switching ---
   [pass] string tables / panel retranslation / per-language presets
---- 15. Pinned header and double-Ctrl closing ---
+--- 15. Pinned header and double-Alt closing ---
   [pass] header stays at the top (does not move when the window grows)
-  [pass] double-Ctrl toggles the panel + tray close entry
+  [pass] double-Alt toggles the panel + tray close entry
+  [pass] Alt pair fires; Alt+key and Ctrl do not
 --- 16. Screenshot growth ---
   [pass] a new picture grows the panel into view step by step
 --- 17. Output token budget ---
   [pass] default is generous / 0 means server decides / nonsense is repaired
 --- 18. Text / vision model split ---
   [pass] screenshots use the vision model / preview tiers are respected
-Passed 21, failed 0
+Passed 23, failed 0
 All self-tests passed.
 ```
 
@@ -223,13 +233,15 @@ All self-tests passed.
 
 ## 7. Implementation notes
 
-**1. How is a double Ctrl detected?**
+**1. How is a double Alt detected?**
 `hotkey.py` installs a low-level keyboard hook with `SetWindowsHookExW(WH_KEYBOARD_LL, ...)`, running on its own thread's message loop (no administrator rights required). The rules:
 
-- Pressing Ctrl records a timestamp and enters the pending state.
-- Pressing Ctrl again within `double_ctrl_interval_ms` (420 ms by default) fires the event.
-- Any other key press in between cancels the pending state, so combinations such as **Ctrl+C and Ctrl+V never trigger it by accident**.
+- Pressing Alt records a timestamp and enters the pending state.
+- Pressing Alt again within `double_alt_interval_ms` (420 ms by default) fires the event.
+- Any other key press in between cancels the pending state, so combinations such as **Alt+Tab and Alt+F4 never trigger it by accident**.
 - Synthetic key events carrying `LLKHF_INJECTED` are ignored, which prevents the app's own Ctrl+C from causing a feedback loop.
+- `VK_MENU`, `VK_LMENU` and `VK_RMENU` all count, so either physical Alt key works — and the two can be paired with each other.
+- Alt combinations arrive as `WM_SYSKEYDOWN` rather than `WM_KEYDOWN`, so the hook accepts both message types. Ctrl is no longer a trigger at all.
 
 The hook callback only decides; the real work is handed back to the main thread through a Qt signal (a queued cross-thread connection).
 
@@ -279,8 +291,8 @@ The trap that was hit: the result area (`QTextBrowser`) does not participate in 
 
 The fix wraps the entire top block (title bar / context / preset chips / input / action row) in a dedicated `top` container and appends **`addStretch(1)` at the end of that container**: all surplus space lands in that elastic gap, so its children always start at the top. The card layout still has only the result area as a stretchable item (`stretch=1`), so when the window grows it is the result area that grows while the trailing gap absorbs the remainder — the top content does not move a pixel. Self-test group 15 asserts `header.y() == 0` at several heights.
 
-**12. Why make double-Ctrl a toggle?**
-The double-press detection in `hotkey.py` (`GlobalInput.double_ctrl`) is global by nature and does not know whether the panel is visible, so "closing" is merely a branch in the main thread: if the panel is visible → `hide_panel()`; otherwise → grab the selection and open the panel as usual. It is a setting (`behavior.toggle_on_double_ctrl`) rather than hard-coded behavior because "double-Ctrl re-reads the selection" is a legitimate workflow for people who select text repeatedly — both habits are supported, with close-on-double-Ctrl on by default.
+**12. Why make double-Alt a toggle?**
+The double-press detection in `hotkey.py` (`GlobalInput.double_alt`) is global by nature and does not know whether the panel is visible, so "closing" is merely a branch in the main thread: if the panel is visible → `hide_panel()`; otherwise → grab the selection and open the panel as usual. It is a setting (`behavior.toggle_on_double_alt`) rather than hard-coded behavior because "double-Alt re-reads the selection" is a legitimate workflow for people who select text repeatedly — both habits are supported, with close-on-double-Alt on by default.
 
 **13. How does the panel grow around a screenshot?**
 The panel is sized *from* the picture, not the other way round. `_image_display_size()` fits the picture into a preferred box — **small / medium / large** under Settings → Appearance, `medium` (320 px wide) by default — and only then does `_start_reveal()` animate a single 0→1 progress value, re-deriving the picture size, the context block and the window around it on every frame. Three things are worth knowing:
@@ -310,8 +322,11 @@ One rule keeps this from being annoying: **a picture-fitted size is never rememb
 
 ## 8. FAQ
 
-**Q: Pressing Ctrl twice does nothing.**
+**Q: Pressing Alt twice does nothing.**
 A: In rare cases security software blocks the keyboard hook. Change the "Read selected text" hotkey in Settings to `ctrl+alt+q` to use a registered hotkey instead. Also note that applications running as administrator (such as Task Manager) cannot be observed by a non-elevated hook — run Knocknock as administrator in that case.
+
+**Q: Pressing Alt twice also pops open the menu bar.**
+A: Expected, and unavoidable. Windows itself opens the system menu (or Explorer's ribbon) when Alt is pressed and released on its own, and Knocknock only observes the key rather than swallowing it. Swallowing it would break ordinary Alt usage in every application. The menu closes again as soon as you keep typing; if it bothers you, bind `ctrl+alt+q` in Settings and use that instead.
 
 **Q: The copied text is stale clipboard content.**
 A: The target application did not respond to Ctrl+C (PDF readers and image viewers often behave this way). Use **Ctrl+Alt+A** to capture a region and a vision model instead.
@@ -397,6 +412,7 @@ run it directly; `config.json` is created next to the executable on first launch
 
 | Version | Changes |
 | --- | --- |
+| 1.4.0 | **The double-tap trigger moved from Ctrl to Alt**, because Ctrl is held for multi-selecting files in Explorer and for countless editing shortcuts. The settings were renamed with it (`double_alt_interval_ms`, `toggle_on_double_alt`); configs written by an earlier version are migrated automatically, keeping the values you chose. Either physical Alt key works, and Alt combinations (Alt+Tab, Alt+F4) are correctly ignored |
 | 1.3.0 | Screenshots **grow the panel**: the window animates open around the captured picture instead of squeezing it into a fixed 150 px strip, with the preview **capped at 400 px wide** (240 / 320 / 400 under Appearance) and a size the panel fits itself to never being remembered as the user's own. **Text and vision models are now separate settings** (an empty vision model keeps the old single-model behaviour), and **Test connection** checks both. The default **max output tokens went from 1200 to 4096** (0 now means "let the server decide"), and configs still sitting on the old 1200 default are lifted automatically |
 | 1.2.0 | The title bar (navigation bar) is now pinned to the top of the panel instead of drifting with window height; **double Ctrl now closes the panel** (can be disabled under Settings → Behavior); the tray menu gained a **Close panel** entry |
 | 1.1.0 | The project was renamed to **Knocknock**; added the Chinese/English interface switch (panel, tray, settings, capture hints, and model errors all covered, with presets stored per language) |

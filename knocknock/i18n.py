@@ -29,11 +29,11 @@ _current = ZH
 _ZH: Dict[str, str] = {
     # app / tray
     "app.name": "Knocknock",
-    "app.tray_tooltip": "Knocknock —— 双击 Ctrl 划词问答",
+    "app.tray_tooltip": "Knocknock —— 双击 Alt 划词问答",
     "tray.menu.screenshot": "截图选区（{hotkey}）",
     "tray.menu.ask": "读取选中文字（{hotkey}）",
-    "tray.menu.show": "显示面板（双击 Ctrl）",
-    "tray.menu.hide": "关闭面板（双击 Ctrl）",
+    "tray.menu.show": "显示面板（双击 Alt）",
+    "tray.menu.hide": "关闭面板（双击 Alt）",
     "tray.menu.settings": "设置…",
     "tray.menu.quit": "退出 Knocknock",
     # 消息框 / 通知
@@ -45,7 +45,7 @@ _ZH: Dict[str, str] = {
     "notify.started.title": "Knocknock 已启动",
     "notify.started.body": (
         "首次使用请先在「设置」中填写 API Key。\n"
-        "双击 Ctrl 唤起面板，Ctrl+Alt+A 截图选区。"
+        "双击 Alt 唤起面板，Ctrl+Alt+A 截图选区。"
     ),
     # 主题
     "theme.light": "浅色",
@@ -56,8 +56,8 @@ _ZH: Dict[str, str] = {
     "theme.switch_to_dark": "切换到深色模式",
     # panel
     "panel.title": "Knocknock",
-    "panel.subtitle.long": "双击 Ctrl 唤起 / 收起 · 选中内容后提问",
-    "panel.subtitle.short": "双击 Ctrl 唤起 / 收起",
+    "panel.subtitle.long": "双击 Alt 唤起 / 收起 · 选中内容后提问",
+    "panel.subtitle.short": "双击 Alt 唤起 / 收起",
     "panel.tooltip.pin": "窗口置顶",
     "panel.tooltip.crop": "截图选区 (Ctrl+Alt+A)",
     "panel.tooltip.settings": "设置",
@@ -152,13 +152,13 @@ _ZH: Dict[str, str] = {
         "全部预置按钮会随宽度自动换行，永远不会被裁掉；调好的尺寸会被记住，"
         "下次打开沿用。"
     ),
-    "settings.behavior.interval": "双击 Ctrl 判定间隔",
+    "settings.behavior.interval": "双击 Alt 判定间隔",
     "settings.behavior.screenshot_hotkey": "截图选区热键",
     "settings.behavior.ask_hotkey": "读取选中文字热键",
     "settings.behavior.restore_clipboard": "读取选中文字后还原剪贴板内容",
     "settings.behavior.autosend": "点击预置指令后自动发送",
     "settings.behavior.esc": "按 Esc 隐藏面板",
-    "settings.behavior.toggle_double_ctrl": "面板已打开时，再双击 Ctrl 关闭它",
+    "settings.behavior.toggle_double_alt": "面板已打开时，再双击 Alt 关闭它",
     # 杂项
     "hotkey.unset": "未设置",
     "capture.hint": "拖拽鼠标框选区域   ·   Esc / 右键 取消   ·   Enter 确认",
@@ -209,11 +209,11 @@ _ZH: Dict[str, str] = {
 # ---------------------------------------------------------------- English table
 _EN: Dict[str, str] = {
     "app.name": "Knocknock",
-    "app.tray_tooltip": "Knocknock — double-tap Ctrl to ask about anything on screen",
+    "app.tray_tooltip": "Knocknock — double-tap Alt to ask about anything on screen",
     "tray.menu.screenshot": "Capture region ({hotkey})",
     "tray.menu.ask": "Read selected text ({hotkey})",
-    "tray.menu.show": "Show panel (double-tap Ctrl)",
-    "tray.menu.hide": "Close panel (double-tap Ctrl)",
+    "tray.menu.show": "Show panel (double-tap Alt)",
+    "tray.menu.hide": "Close panel (double-tap Alt)",
     "tray.menu.settings": "Settings…",
     "tray.menu.quit": "Quit Knocknock",
     "dialog.tray_unavailable": "The system tray is unavailable, so Knocknock cannot run.",
@@ -224,7 +224,7 @@ _EN: Dict[str, str] = {
     "notify.started.title": "Knocknock is running",
     "notify.started.body": (
         "Please fill in your API Key under Settings first.\n"
-        "Double-tap Ctrl to open the panel; Ctrl+Alt+A to capture a region."
+        "Double-tap Alt to open the panel; Ctrl+Alt+A to capture a region."
     ),
     "theme.light": "Light",
     "theme.dark": "Dark",
@@ -233,8 +233,8 @@ _EN: Dict[str, str] = {
     "theme.switch_to_light": "Switch to light mode",
     "theme.switch_to_dark": "Switch to dark mode",
     "panel.title": "Knocknock",
-    "panel.subtitle.long": "Double-tap Ctrl to open / close · then ask about the selection",
-    "panel.subtitle.short": "Double-tap Ctrl to open / close",
+    "panel.subtitle.long": "Double-tap Alt to open / close · then ask about the selection",
+    "panel.subtitle.short": "Double-tap Alt to open / close",
     "panel.tooltip.pin": "Keep on top",
     "panel.tooltip.crop": "Capture region (Ctrl+Alt+A)",
     "panel.tooltip.settings": "Settings",
@@ -332,13 +332,13 @@ _EN: Dict[str, str] = {
         "All preset buttons wrap with the width and are never clipped; your size is "
         "remembered and restored next time."
     ),
-    "settings.behavior.interval": "Double-Ctrl detection window",
+    "settings.behavior.interval": "Double-Alt detection window",
     "settings.behavior.screenshot_hotkey": "Capture hotkey",
     "settings.behavior.ask_hotkey": "Read-selection hotkey",
     "settings.behavior.restore_clipboard": "Restore clipboard content after reading the selection",
     "settings.behavior.autosend": "Send automatically when a preset is clicked",
     "settings.behavior.esc": "Hide the panel with Esc",
-    "settings.behavior.toggle_double_ctrl": "Double-tap Ctrl again to close the panel",
+    "settings.behavior.toggle_double_alt": "Double-tap Alt again to close the panel",
     "hotkey.unset": "Not set",
     "capture.hint": "Drag to select a region   ·   Esc / right-click to cancel   ·   Enter to confirm",
     "llm.system_prompt": (

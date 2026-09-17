@@ -348,18 +348,18 @@ class SettingsDialog(QDialog):
         behavior = self.cfg["behavior"]
         hotkeys = self.cfg["hotkeys"]
 
-        self.double_ctrl_spin = QSpinBox(page)
-        self.double_ctrl_spin.setRange(150, 1000)
-        self.double_ctrl_spin.setSingleStep(10)
-        self.double_ctrl_spin.setSuffix(" ms")
-        self.double_ctrl_spin.setValue(int(hotkeys.get("double_ctrl_interval_ms", 420)))
+        self.double_alt_spin = QSpinBox(page)
+        self.double_alt_spin.setRange(150, 1000)
+        self.double_alt_spin.setSingleStep(10)
+        self.double_alt_spin.setSuffix(" ms")
+        self.double_alt_spin.setValue(int(hotkeys.get("double_alt_interval_ms", 420)))
 
         self.screenshot_edit = QLineEdit(str(hotkeys.get("screenshot", "ctrl+alt+a")), page)
         self.ask_edit = QLineEdit(str(hotkeys.get("ask_selection", "ctrl+alt+q")), page)
 
         form = QFormLayout()
         form.setSpacing(10)
-        form.addRow(self._label(i18n.t("settings.behavior.interval")), self.double_ctrl_spin)
+        form.addRow(self._label(i18n.t("settings.behavior.interval")), self.double_alt_spin)
         form.addRow(self._label(i18n.t("settings.behavior.screenshot_hotkey")), self.screenshot_edit)
         form.addRow(self._label(i18n.t("settings.behavior.ask_hotkey")), self.ask_edit)
         layout.addLayout(form)
@@ -376,9 +376,9 @@ class SettingsDialog(QDialog):
         self.esc_check.setChecked(bool(behavior.get("close_on_esc", True)))
         layout.addWidget(self.esc_check)
 
-        self.toggle_ctrl_check = QCheckBox(i18n.t("settings.behavior.toggle_double_ctrl"), page)
-        self.toggle_ctrl_check.setChecked(bool(behavior.get("toggle_on_double_ctrl", True)))
-        layout.addWidget(self.toggle_ctrl_check)
+        self.toggle_alt_check = QCheckBox(i18n.t("settings.behavior.toggle_double_alt"), page)
+        self.toggle_alt_check.setChecked(bool(behavior.get("toggle_on_double_alt", True)))
+        layout.addWidget(self.toggle_alt_check)
 
         layout.addStretch(1)
         return page
@@ -430,10 +430,10 @@ class SettingsDialog(QDialog):
         behavior["restore_clipboard"] = bool(self.restore_check.isChecked())
         behavior["auto_send_on_preset"] = bool(self.autosend_check.isChecked())
         behavior["close_on_esc"] = bool(self.esc_check.isChecked())
-        behavior["toggle_on_double_ctrl"] = bool(self.toggle_ctrl_check.isChecked())
+        behavior["toggle_on_double_alt"] = bool(self.toggle_alt_check.isChecked())
 
         hotkeys = cfg["hotkeys"]
-        hotkeys["double_ctrl_interval_ms"] = int(self.double_ctrl_spin.value())
+        hotkeys["double_alt_interval_ms"] = int(self.double_alt_spin.value())
         hotkeys["screenshot"] = self.screenshot_edit.text().strip()
         hotkeys["ask_selection"] = self.ask_edit.text().strip()
         return cfg
