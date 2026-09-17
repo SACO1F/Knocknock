@@ -1,20 +1,42 @@
-# Knocknock — Select text or grab a screenshot, ask a large language model
+<h1 align="center">Knocknock</h1>
 
-A small Windows desktop utility: **select text anywhere on screen, or drag a box around a region, press Alt twice, type an instruction in plain language — the answer appears in a floating panel.**
+<p align="center">
+  <b>Select text or grab a screenshot anywhere on screen, press the trigger key twice, ask a large language model.</b><br>
+  A small, fast Windows desktop utility built with PySide6.
+</p>
 
-The interface borrows macOS / iOS design language: a borderless rounded card, a soft drop shadow, system-blue accents, and rounded chip buttons. It supports always-on-top, free resizing, a **Chinese / English interface toggle**, and light / dark themes.
+<p align="center">
+  <a href="#10-version-history"><img alt="version" src="https://img.shields.io/badge/version-1.5.0-0A84FF"></a>
+  <img alt="platform" src="https://img.shields.io/badge/platform-Windows%2010%2B-0078D6">
+  <img alt="python" src="https://img.shields.io/badge/python-3.9%2B-3776AB">
+  <img alt="pyside6" src="https://img.shields.io/badge/PySide6-Essentials%206.6%2B-41CD52">
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-8A8A8E"></a>
+</p>
 
-![Light panel](screenshots/01-light-panel.png)
+---
 
-| Dark theme | Narrow panel (chips wrap, none are dropped) |
-| --- | --- |
-| ![Dark panel](screenshots/02-dark-panel.png) | ![Narrow panel](screenshots/03-narrow-panel-wrapped-chips.png) |
+<p align="center">
+  <img src="screenshots/01-light-panel.png" width="720" alt="The Knocknock panel in the light theme">
+</p>
 
-| Wide panel | Settings dialog (Appearance) |
-| --- | --- |
-| ![Wide panel](screenshots/04-wide-panel.png) | ![Settings](screenshots/05-settings-dark.png) |
+<div align="center">
+  <table>
+    <tr>
+      <td align="center" width="50%"><b>Dark theme</b><br><img src="screenshots/02-dark-panel.png" alt="The panel in the dark theme"></td>
+      <td align="center" width="50%"><b>Narrow panel (chips wrap, none are dropped)</b><br><img src="screenshots/03-narrow-panel-wrapped-chips.png" alt="A narrow panel with wrapped preset chips"></td>
+    </tr>
+    <tr>
+      <td align="center"><b>Wide panel</b><br><img src="screenshots/04-wide-panel.png" alt="A wide panel"></td>
+      <td align="center"><b>Settings dialog</b><br><img src="screenshots/05-settings-dark.png" alt="The settings dialog in the dark theme"></td>
+    </tr>
+  </table>
+</div>
 
-> The images above are real interface renders produced by offscreen painting; they live in `screenshots/`.
+<p align="center"><sub>Real interface renders produced by offscreen painting; the originals live in <code>screenshots/</code>.</sub></p>
+
+---
+
+**Contents**: [1. Features](#1-features) · [2. Getting started](#2-getting-started) · [3. Controls](#3-controls) · [4. Project structure](#4-project-structure) · [5. Chinese / English switch](#5-how-the-chinese--english-switch-works) · [6. Self-test](#6-self-test) · [7. Implementation notes](#7-implementation-notes) · [8. FAQ](#8-faq) · [9. Packaging](#9-packaging-a-single-exe-optional) · [10. Version history](#10-version-history)
 
 ---
 
@@ -22,8 +44,9 @@ The interface borrows macOS / iOS design language: a borderless rounded card, a 
 
 | Capability | Description |
 | --- | --- |
-| Text-selection Q&A | Select text with the mouse in any application, press **Alt twice**, and the panel opens with the selection loaded |
-| Double-Alt toggle | When the panel is already open, **pressing Alt twice again hides it**. You can turn this off in Settings and go back to "always re-read the selection" |
+| Text-selection Q&A | Select text with the mouse in any application, press the **trigger key twice**, and the panel opens with the selection loaded |
+| Configurable trigger | The double-tap key is **any single key you choose** — Alt, Ctrl, Shift, CapsLock, F5, `a`, anything. Settings → Behavior → Double-tap key |
+| Double-tap toggle | When the panel is already open, **pressing the trigger key twice again hides it**. You can turn this off in Settings and go back to "always re-read the selection" |
 | Screenshot region | **Ctrl + Alt + A** (or the tray menu) opens a full-screen overlay; drag to select any region, with a pixel magnifier and live size readout |
 | Screenshot sizing | The panel grows around the captured picture instead of squeezing it — but the preview is **capped at 400 px wide** (default 320 px), with small / medium / large under Settings → Appearance |
 | Prompt input | Type freely in the panel's input box, or click a preset chip (Translate / Explain / Summarize / Polish / Explain code) |
@@ -41,6 +64,8 @@ The interface borrows macOS / iOS design language: a borderless rounded card, a 
 ---
 
 ## 2. Getting started
+
+> **Requirements:** Windows 10 or newer, Python 3.9+, and an API key from any OpenAI-compatible provider (or Anthropic). No admin rights are needed.
 
 ### 2.1 Install dependencies
 
@@ -105,10 +130,10 @@ Reference values for common providers:
 
 | Action | Effect |
 | --- | --- |
-| Select text, then press **Alt twice** | Read the selection and open the panel |
-| Press **Alt twice** while the panel is open | Hide the panel (can be disabled under Settings → Behavior) |
+| Select text, then press the **trigger key twice** | Read the selection and open the panel |
+| Press the **trigger key twice** while the panel is open | Hide the panel (can be disabled under Settings → Behavior) |
 | **Ctrl + Alt + A** | Enter screenshot-region mode |
-| **Ctrl + Alt + Q** | Same as pressing Alt twice |
+| **Ctrl + Alt + Q** | Same as double-tapping the trigger key |
 | **Enter** in the panel | Send |
 | **Shift + Enter** | New line |
 | **Esc** | Hide the panel / cancel a capture |
@@ -119,16 +144,18 @@ Reference values for common providers:
 | Click the tray icon | Show / hide the panel |
 | Tray menu → **Close panel** | Dismiss the floating panel |
 | Settings → Appearance → **Interface language** | Switch between Simplified Chinese and English (applies after saving) |
-
-> **Why Alt and not Ctrl?** Ctrl is held down to multi-select files in Explorer and for a great
-> many editing shortcuts, so a stray double press is easy to produce by accident. A bare Alt tap
-> is comparatively rare.
->
-> The trade-off: Windows normally uses a lone Alt press to open an application's menu bar (the
-> system menu, or the ribbon in Explorer). Double-tapping Alt may therefore flash that menu.
-> Knocknock only observes the key — it never swallows it — so this cannot be suppressed without
-> breaking ordinary Alt usage everywhere.
 | Settings → Appearance → **Screenshot size** | How wide the captured preview may be: small 240 px / medium 320 px / large 400 px (hard ceiling) |
+
+> **Which key should the trigger be?** It is a setting (`Settings → Behavior → Double-tap key`),
+> and the trade-off moves with the choice. Ctrl is held down to multi-select files in Explorer and
+> for a great many editing shortcuts, so a stray double press is easy to produce by accident; a
+> lone Alt press opens an application's menu bar (the system menu, or the ribbon in Explorer), so
+> double-tapping Alt may flash that menu; and a letter or digit key also fires while you type that
+> character twice. Pick whichever you are least likely to hit by accident — a rarely used function
+> key or CapsLock is often the calmest choice.
+>
+> Knocknock only *observes* the key — it never swallows it — so none of these side effects can be
+> suppressed without breaking ordinary usage of that key everywhere.
 
 ---
 
@@ -196,9 +223,10 @@ To add a third language, add one dictionary in `i18n.py`, register it in `LANGUA
 
 After changing code, run the bundled self-test. It covers configuration, hotkey parsing, message
 construction, theming, the UI flow, screen capture, clipboard text grabbing, tray-icon uniqueness,
-panel resizing, shadows and tooltips, the Chinese/English switch, the pinned header, double-Alt
-closing and detection, screenshot growth, the output token budget and the text/vision model split —
-plus LLM calls against a local mock server, so no quota is consumed:
+panel resizing, shadows and tooltips, the Chinese/English switch, the pinned header, double-tap
+closing and detection with a configurable trigger key, screenshot growth, the output token budget
+and the text/vision model split — plus LLM calls against a local mock server, so no quota is
+consumed:
 
 ```bash
 .venv\Scripts\python.exe tests\selftest.py
@@ -212,17 +240,18 @@ Expected output:
 ...
 --- 14. Chinese/English switching ---
   [pass] string tables / panel retranslation / per-language presets
---- 15. Pinned header and double-Alt closing ---
+--- 15. Pinned header and double-tap closing ---
   [pass] header stays at the top (does not move when the window grows)
-  [pass] double-Alt toggles the panel + tray close entry
-  [pass] Alt pair fires; Alt+key and Ctrl do not
+  [pass] double-tap key toggles the panel + tray close entry
+  [pass] chosen key fires; other keys and combos do not
+  [pass] subtitle / tray / tooltip follow the configured key
 --- 16. Screenshot growth ---
   [pass] a new picture grows the panel into view step by step
 --- 17. Output token budget ---
   [pass] default is generous / 0 means server decides / nonsense is repaired
 --- 18. Text / vision model split ---
   [pass] screenshots use the vision model / preview tiers are respected
-Passed 23, failed 0
+Passed 24, failed 0
 All self-tests passed.
 ```
 
@@ -233,45 +262,46 @@ All self-tests passed.
 
 ## 7. Implementation notes
 
-**1. How is a double Alt detected?**
+#### 1. How is the double-tap detected?
 `hotkey.py` installs a low-level keyboard hook with `SetWindowsHookExW(WH_KEYBOARD_LL, ...)`, running on its own thread's message loop (no administrator rights required). The rules:
 
-- Pressing Alt records a timestamp and enters the pending state.
-- Pressing Alt again within `double_alt_interval_ms` (420 ms by default) fires the event.
-- Any other key press in between cancels the pending state, so combinations such as **Alt+Tab and Alt+F4 never trigger it by accident**.
+- Pressing the configured key (`hotkeys.double_tap_key`, any single key — Alt by default) records a timestamp and enters the pending state.
+- Pressing it again within `double_tap_interval_ms` (420 ms by default) fires the event.
+- Any other key press in between cancels the pending state, so combinations such as **Alt+Tab, Alt+F4 or Ctrl+C never trigger it by accident**.
 - Synthetic key events carrying `LLKHF_INJECTED` are ignored, which prevents the app's own Ctrl+C from causing a feedback loop.
-- `VK_MENU`, `VK_LMENU` and `VK_RMENU` all count, so either physical Alt key works — and the two can be paired with each other.
-- Alt combinations arrive as `WM_SYSKEYDOWN` rather than `WM_KEYDOWN`, so the hook accepts both message types. Ctrl is no longer a trigger at all.
+- A modifier resolves to every code the hook may report for it — `VK_MENU`, `VK_LMENU` and `VK_RMENU` for Alt — so either physical key works, and the two can be paired with each other.
+- Modifier combinations arrive as `WM_SYSKEYDOWN` rather than `WM_KEYDOWN`, so the hook accepts both message types.
+- A key name the parser does not recognise falls back to the default (Alt) instead of leaving the trigger matching nothing.
 
 The hook callback only decides; the real work is handed back to the main thread through a Qt signal (a queued cross-thread connection).
 
-**2. How is the selected text retrieved?**
+#### 2. How is the selected text retrieved?
 Windows has no public API for reading another application's selection, so the usual approach is to simulate `Ctrl+C`: record `GetClipboardSequenceNumber()`, send Ctrl+C, poll until the sequence number changes, then read the clipboard. If it never changes, the user had nothing selected, and the app falls back to whatever image or text the clipboard already held.
 
 **Ordering matters:** the content must be captured *before* the panel is shown — once the panel takes focus, the target application's selection is gone.
 
-**3. Capture coordinates on high-DPI screens**
+#### 3. Capture coordinates on high-DPI screens
 The whole virtual desktop from `virtualGeometry()` is stitched into one large image in device pixels, and the overlay window covers the virtual desktop. The selection rectangle is drawn in logical coordinates and converted through `devicePixelRatio` when cropping, so at 125% / 150% scaling the screenshot is neither blurry nor misaligned.
 
-**4. How is the Apple-style look achieved?**
+#### 4. How is the Apple-style look achieved?
 - The top-level window uses `WA_TranslucentBackground` with no frame; inside it a `QFrame#Card` paints the rounded background, wrapped in a `QGraphicsDropShadowEffect` for the soft shadow.
 - All styling lives in the QSS built by `theme.py`: system blue `#0A84FF`, secondary grey `#F2F2F7`, corner radii of 11–16 px, and borderless buttons that grey out on hover.
 - Icons are not image assets — they are drawn as vectors with `QPainter` (`widgets.glyph_icon`), supersampled 2× for crisp edges and easy recoloring.
 
-**5. Always on top**
+#### 5. Always on top
 The window flags include `WindowStaysOnTopHint`. Toggling the pin button calls `setWindowFlags()` again and then `show()` — changing flags hides the window in Qt, so it must be re-shown.
 
-**6. High-DPI displays (125% / 150% scaling)**
+#### 6. High-DPI displays (125% / 150% scaling)
 Screen capture stitches the virtual desktop into one large image in **device pixels** (with no dpr set), draws the selection in logical coordinates, and multiplies by the dpr when cropping. This sidesteps the coordinate ambiguity of `QPixmap.copy()` when dpr is not 1, so screenshots are neither blurry nor offset.
 
-**7. How does the panel keep every chip visible at any size?**
+#### 7. How does the panel keep every chip visible at any size?
 - The preset chips live in a custom `ChipBar`, which on every width change recomputes the row count via `FlowLayout.heightForWidth()` and then `setFixedHeight()` to **exactly what the buttons need** — never clipped, never wasting vertical space.
 - The panel uses the default `SetDefaultConstraint` so the minimum size is derived from the layout, and `resizeEvent` clamps once more against `layout().minimumSize()`. It is therefore **impossible to drag it smaller than its content**.
 - The result area is the only stretchable item (`stretch=1`): growing the window makes it taller; shrinking presses on it first, while everything else keeps its size.
 - Long pieces of text such as the subtitle and the hint line use `ShrinkableLabel` (whose `minimumSizeHint` is relaxed to 0); otherwise they would force a large minimum width. On a narrow panel the long string is swapped for a short one ("Selection loaded, type an instruction" → "Selection loaded").
 - Resize hit-testing happens in the shadow margin (18 px) for edges and corners, together with the three diagonal grip lines at the bottom right. A size the user has dragged is stored in `ui.last_size` and restored on the next launch.
 
-**8. How is theming organized?**
+#### 8. How is theming organized?
 `theme.py` defines a `Palette` dataclass plus two constant instances (light and dark); `build_qss()` assembles the entire stylesheet from the palette, and `palette()` returns the active one. Every hard-coded color now comes from the palette — there are no global color constants left.
 Three things to watch:
 
@@ -279,22 +309,22 @@ Three things to watch:
 - **Every place that uses a color must pull its text color from the palette explicitly.** The trap that was hit: `QToolTip` had a theme-aware background but its text color was hard-wired to `text_primary`, producing dark-on-dark in the light theme with a contrast ratio of 15 — completely unreadable. `Palette` now has dedicated `tooltip_bg` / `tooltip_text` / `tooltip_border` fields.
 - `QDialogButtonBox` overrides the stylesheet of its child buttons (`#Primary` / `#Ghost` stop working), so the settings dialog lays out its button row manually with a `QHBoxLayout`.
 
-**9. Why re-translate the panel instead of reopening it?**
+#### 9. Why re-translate the panel instead of reopening it?
 The panel is a long-lived object (hotkeys must always be able to summon it), so it cannot be destroyed and rebuilt just to change language. `panel.retranslate()` therefore handles strings in two categories: **stateless** ones (title, buttons, tooltips, placeholders) are set directly; **state-dependent** ones (subtitle, context badge and word count, preset chips) are recomputed by `_refresh_context_view()` / `_rebuild_chips()` from the current context. Switching language therefore never loses the loaded selection or a generated answer.
 
-**10. The shadow margin must exceed the shadow's actual reach**
+#### 10. The shadow margin must exceed the shadow's actual reach
 A `QGraphicsDropShadowEffect` paints outside the card; if the window is too small it is **cut off by the window edge into a hard line** (it looks like a dark ring around the panel).
 In Qt the nominal `blurRadius` and the real reach are not the same thing. Measured: `blur=38 + offsetY=10` reaches about 42 px. The current values are `blur=26 + offsetY=7` (about 19 px reach) with a 30 px margin, leaving slack on all four sides. Self-test group 12 scans the outermost ring of the window and asserts its alpha is 0, so changing these numbers cannot silently regress.
 
-**11. Why is the title bar pinned to the top?**
+#### 11. Why is the title bar pinned to the top?
 The trap that was hit: the result area (`QTextBrowser`) does not participate in layout while **hidden**, so at that moment the card layout contains **no item with a stretch factor at all**. Qt then distributes the surplus vertical space **evenly into the gaps between items**, which shows up as "the taller the panel, the further down the title bar and input box drift".
 
 The fix wraps the entire top block (title bar / context / preset chips / input / action row) in a dedicated `top` container and appends **`addStretch(1)` at the end of that container**: all surplus space lands in that elastic gap, so its children always start at the top. The card layout still has only the result area as a stretchable item (`stretch=1`), so when the window grows it is the result area that grows while the trailing gap absorbs the remainder — the top content does not move a pixel. Self-test group 15 asserts `header.y() == 0` at several heights.
 
-**12. Why make double-Alt a toggle?**
-The double-press detection in `hotkey.py` (`GlobalInput.double_alt`) is global by nature and does not know whether the panel is visible, so "closing" is merely a branch in the main thread: if the panel is visible → `hide_panel()`; otherwise → grab the selection and open the panel as usual. It is a setting (`behavior.toggle_on_double_alt`) rather than hard-coded behavior because "double-Alt re-reads the selection" is a legitimate workflow for people who select text repeatedly — both habits are supported, with close-on-double-Alt on by default.
+#### 12. Why make the double-tap a toggle?
+The double-press detection in `hotkey.py` (`GlobalInput.double_tap`) is global by nature and does not know whether the panel is visible, so "closing" is merely a branch in the main thread: if the panel is visible → `hide_panel()`; otherwise → grab the selection and open the panel as usual. It is a setting (`behavior.toggle_on_double_tap`) rather than hard-coded behavior because "the trigger re-reads the selection" is a legitimate workflow for people who select text repeatedly — both habits are supported, with close-on-double-tap on by default.
 
-**13. How does the panel grow around a screenshot?**
+#### 13. How does the panel grow around a screenshot?
 The panel is sized *from* the picture, not the other way round. `_image_display_size()` fits the picture into a preferred box — **small / medium / large** under Settings → Appearance, `medium` (320 px wide) by default — and only then does `_start_reveal()` animate a single 0→1 progress value, re-deriving the picture size, the context block and the window around it on every frame. Three things are worth knowing:
 
 - **The width has a hard ceiling of 400 px** (`IMAGE_MAX_WIDTH`), applied after the tier lookup and again in `_image_box()`. A screenshot is context for the question, not an image viewer: the first version sized the preview from the picture's own resolution, which turned a capture into a 1094 px-wide window across half the desktop. The ceiling is enforced in code rather than by picking small numbers, so no tier — and no hand-edited `config.json` — can creep past it.
@@ -306,10 +336,10 @@ The window is only ever as small as its content: the interpolation is clamped by
 
 One rule keeps this from being annoying: **a picture-fitted size is never remembered as the user's own.** `_remember_size()` saves the size on hide only while `_user_size` (the size the user actually dragged out) still matches the window; otherwise a single capture would silently redefine the panel size that gets restored on the next launch.
 
-**14. Why is the output token budget 4096 by default?**
+#### 14. Why is the output token budget 4096 by default?
 1200 was too small: long explanations were cut off mid-sentence, and a reasoning model spends the budget on `reasoning_content` before it writes any answer — which is why a truncated reasoning model produced a *completely empty* reply. 4096 is the largest cap every mainstream provider accepts, so it is a safe default, and setting the field to 0 drops `max_tokens` from the request entirely so the provider applies its own maximum. Anthropic is the exception: it rejects a request without `max_tokens`, so "auto" resolves to 8192 there. A value still sitting on the old 1200 default is lifted automatically in `config._normalize()`, on the same principle as the system prompt (that value was never chosen by the user, it was the built-in default).
 
-**15. How are the text and vision models kept apart?**
+#### 15. How are the text and vision models kept apart?
 `resolve_model(api_cfg, messages)` in `llm.py` scans the outgoing messages for an `image_url` block. If one is there and `api.vision_model` is set, that model is used; otherwise `api.model` handles it. Three details:
 
 - **The decision is made from the messages, not from a flag the caller passes.** The panel builds the message list, but the worker is also used by the connection test, and a rule that lives in one place cannot drift between callers.
@@ -322,56 +352,56 @@ One rule keeps this from being annoying: **a picture-fitted size is never rememb
 
 ## 8. FAQ
 
-**Q: Pressing Alt twice does nothing.**
+#### Q: Pressing the trigger key twice does nothing.
 A: In rare cases security software blocks the keyboard hook. Change the "Read selected text" hotkey in Settings to `ctrl+alt+q` to use a registered hotkey instead. Also note that applications running as administrator (such as Task Manager) cannot be observed by a non-elevated hook — run Knocknock as administrator in that case.
 
-**Q: Pressing Alt twice also pops open the menu bar.**
-A: Expected, and unavoidable. Windows itself opens the system menu (or Explorer's ribbon) when Alt is pressed and released on its own, and Knocknock only observes the key rather than swallowing it. Swallowing it would break ordinary Alt usage in every application. The menu closes again as soon as you keep typing; if it bothers you, bind `ctrl+alt+q` in Settings and use that instead.
+#### Q: Pressing Alt twice also pops open the menu bar.
+A: Expected, and unavoidable. Windows itself opens the system menu (or Explorer's ribbon) when Alt is pressed and released on its own, and Knocknock only observes the key rather than swallowing it. Swallowing it would break ordinary Alt usage in every application. The menu closes again as soon as you keep typing — or pick a different trigger key under Settings → Behavior, where a rarely used key such as `f9` or `capslock` has no such side effect.
 
-**Q: The copied text is stale clipboard content.**
+#### Q: The copied text is stale clipboard content.
 A: The target application did not respond to Ctrl+C (PDF readers and image viewers often behave this way). Use **Ctrl+Alt+A** to capture a region and a vision model instead.
 
-**Q: The model says it cannot see the image I sent.**
+#### Q: The model says it cannot see the image I sent.
 A: Screenshots go to the **Vision model** field (Settings → Model API); if that is empty they go to the text model, which usually cannot see pictures. Put a multimodal model there — `gpt-4o`, `qwen-vl-max`, `glm-4v` — and click **Test connection**, which checks both models.
 
-**Q: After switching to English, the preset chips are still Chinese.**
+#### Q: After switching to English, the preset chips are still Chinese.
 A: `presets` and `presets_en` are two independent settings. If you previously edited the presets in the Chinese interface, only `presets` changed; `presets_en` still holds the built-in English defaults. Both can be edited separately under Settings → Presets in the matching language.
 
-**Q: After switching language, the settings dialog is still in the old language.**
+#### Q: After switching language, the settings dialog is still in the old language.
 A: The language takes effect after settings are saved; reopen the dialog and it will be in the new language (the Appearance page says so as well).
 
-**Q: Can it start with Windows?**
+#### Q: Can it start with Windows?
 A: Put a shortcut to `run.bat` in the `shell:startup` folder.
 
-**Q: Several Knocknock icons appeared in the tray.**
+#### Q: Several Knocknock icons appeared in the tray.
 A: That was a bug in v1.0 (the tray icon was recreated by mistake when settings were saved) and is fixed in the current version.
 However, **leftover zombie icons do not disappear on their own** — quit Knocknock and start it again to clear them.
 If a new icon still appears on every settings save after a restart, you are running old code; pull the latest version.
 
-**Q: The answer stops in the middle of a sentence.**
+#### Q: The answer stops in the middle of a sentence.
 A: The output token budget was reached. Settings → Model API → **Max output tokens** is 4096 by default; raise it, or set it to 0 to let the server apply its own maximum. Note that reasoning models spend part of that budget on thinking first, so they need more than a plain chat model. Setting it *above* what the model allows makes the API reject the request outright, so do not simply put in a huge number.
 
-**Q: The panel resized itself after I captured a region.**
+#### Q: The panel resized itself after I captured a region.
 A: That is deliberate: the panel grows around the captured picture so the screenshot is actually readable, and narrows again for a small one. The preview is kept small on purpose — a screenshot is context for the question, not an image viewer — and its width is **capped at 400 px**: Settings → Appearance → **Screenshot size** switches between small (240 px), medium (320 px, the default) and large (400 px). Dragging an edge or the corner still overrides the panel size, and the size you chose is remembered.
 
-**Q: Can I make the screenshot preview bigger?**
+#### Q: Can I make the screenshot preview bigger?
 A: Up to 400 px wide, no further — that is a hard ceiling in the code, not just the default. Above that the preview stops being a preview and starts taking over the desktop, which is what the panel is meant to avoid.
 
-**Q: Can text questions and screenshots use different models?**
+#### Q: Can text questions and screenshots use different models?
 A: Yes. Settings → Model API has a **Text model** and a **Vision model**; a screenshot always goes to the vision model, everything else to the text model. Leave the vision model empty to use one model for both (which is how earlier versions worked, so an existing `config.json` needs no changes).
 
-**Q: The panel cannot be shrunk, or its size resets on the next launch.**
+#### Q: The panel cannot be shrunk, or its size resets on the next launch.
 A: The panel cannot be dragged smaller than its content (the chips would be clipped); the minimum size is derived from the layout. A size you dragged to is remembered — but a size the panel took by itself (fitting a screenshot) is not, so capturing a region never redefines the size your panel opens with.
 If you changed "Initial panel width" in Settings, the size is reset to the default and recomputed.
 
-**Q: I switched to the dark theme but the tray menu is still light.**
+#### Q: I switched to the dark theme but the tray menu is still light.
 A: It normally is not. Switching the theme also rebuilds the tray menu stylesheet; if it did not take effect, right-click the tray icon to reopen the menu.
 
-**Q: There is a dark ring around the panel.**
+#### Q: There is a dark ring around the panel.
 A: That was a bug in earlier versions — the shadow margin (18 px) was smaller than the shadow's actual reach (42 px), so the shadow was clipped into a hard edge.
 The current version uses a 30 px margin and a shadow reaching about 19 px, fading out completely on all sides. If you still see a dark edge, you are running old code.
 
-**Q: The tooltip that appears on hover has a dark background that clashes with the light theme.**
+#### Q: The tooltip that appears on hover has a dark background that clashes with the light theme.
 A: Also fixed — tooltips now use dedicated `tooltip_bg` / `tooltip_text` colors: white background with dark text in the light theme, dark grey background with light text in the dark theme.
 
 ---
@@ -412,6 +442,7 @@ run it directly; `config.json` is created next to the executable on first launch
 
 | Version | Changes |
 | --- | --- |
+| 1.5.0 | **The double-tap trigger is configurable: any single key.** Set it under Settings → Behavior → Double-tap key by typing its name (`alt`, `a`, `f2`, `capslock`, `space`, …), and the panel subtitle, tray menu and tray tooltip all follow your choice. The settings were renamed once more to neutral names (`double_tap_key`, `double_tap_interval_ms`, `toggle_on_double_tap`) so they stop naming a specific key; configs from 1.4.0 and earlier migrate automatically, keeping the values you chose. A name the parser does not recognise falls back to the default instead of leaving the trigger dead |
 | 1.4.0 | **The double-tap trigger moved from Ctrl to Alt**, because Ctrl is held for multi-selecting files in Explorer and for countless editing shortcuts. The settings were renamed with it (`double_alt_interval_ms`, `toggle_on_double_alt`); configs written by an earlier version are migrated automatically, keeping the values you chose. Either physical Alt key works, and Alt combinations (Alt+Tab, Alt+F4) are correctly ignored |
 | 1.3.0 | Screenshots **grow the panel**: the window animates open around the captured picture instead of squeezing it into a fixed 150 px strip, with the preview **capped at 400 px wide** (240 / 320 / 400 under Appearance) and a size the panel fits itself to never being remembered as the user's own. **Text and vision models are now separate settings** (an empty vision model keeps the old single-model behaviour), and **Test connection** checks both. The default **max output tokens went from 1200 to 4096** (0 now means "let the server decide"), and configs still sitting on the old 1200 default are lifted automatically |
 | 1.2.0 | The title bar (navigation bar) is now pinned to the top of the panel instead of drifting with window height; **double Ctrl now closes the panel** (can be disabled under Settings → Behavior); the tray menu gained a **Close panel** entry |
