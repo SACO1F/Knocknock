@@ -4,10 +4,11 @@ Usage:
     python main.py
 
 Interaction:
-    1. Double-tap Alt      read the text selected on screen and open the
+    1. Double-tap the trigger key (Settings -> Behavior, Alt by default)
+                            read the text selected on screen and open the
                             instruction panel (closes it if already open)
     2. Ctrl + Alt + A       drag-select any region of the screen (screenshot)
-    3. Ctrl + Alt + Q       same as "double-tap Alt"
+    3. Ctrl + Alt + Q       same as double-tapping the trigger key
     4. Tray icon            entry point for everything, and for quitting
 
 The UI can be switched between Chinese and English from
@@ -26,7 +27,13 @@ from knocknock import i18n
 from knocknock import theme
 from knocknock import winapi
 from knocknock.capture import ScreenOverlay
-from knocknock.config import ensure_config_exists, load_config, save_config
+from knocknock.config import (
+    double_tap_key,
+    double_tap_key_label,
+    ensure_config_exists,
+    load_config,
+    save_config,
+)
 from knocknock.hotkey import GlobalInput
 from knocknock.panel import KnockPanel
 from knocknock.selection import capture_selection
@@ -46,17 +53,17 @@ class KnocknockController(QObject):
 
         i18n.set_language(self.cfg.get("ui", {}).get("language"))
 
-        # When the panel is open, does double-tapping Alt close it or re-read the
-        # selection? Default is to close.
-        self.toggle_on_double_alt = bool(
-            self.cfg.get("behavior", {}).get("toggle_on_double_alt", True)
+        # When the panel is open, does double-tapping the key close it or re-read
+        # the selection? Default is to close.
+        self.toggle_on_double_tap = bool(
+            self.cfg.get("behavior", {}).get("toggle_on_double_tap", True)
         )
 
         self.panel = KnockPanel(self.cfg)
         self.overlay = ScreenOverlay()
 
         self.input_listener = GlobalInput(self)
-        self.input_listener.double_alt.connect(self.on_double_alt)
+        self.input_listener.double_tap.connect(self.on_double_tap)
         self.input_listener.hotkey.connect(self.on_hotkey)
 
         self.tray = self._build_tray()
@@ -107,9 +114,13 @@ class KnocknockController(QObject):
             pass
 
     # ================================================================ tray
+    def _key_label(self) -> str:
+        """Display name of the configured double-tap key, for menus and tooltips."""
+        return double_tap_key_label(self.cfg)
+
     def _build_tray(self) -> QSystemTrayIcon:
         tray = QSystemTrayIcon(app_icon(64), self.app)
-        tray.setToolTip(i18n.t("app.tray_tooltip"))
+        tray.setToolTip(i18n.t("app.tray_tooltip", key=self._key_label()))
         tray.setContextMenu(self._build_menu())
         tray.activated.connect(self._on_tray_activated)
         tray.show()
@@ -130,16 +141,16 @@ class KnocknockController(QObject):
         menu.addAction(action_shot)
 
         action_ask = QAction(i18n.t("tray.menu.ask", hotkey=ask_hotkey), menu)
-        action_ask.triggered.connect(self.on_double_alt)
+        action_ask.triggered.connect(self.on_double_tap)
         menu.addAction(action_ask)
 
         menu.addSeparator()
 
-        action_show = QAction(i18n.t("tray.menu.show"), menu)
+        action_show = QAction(i18n.t("tray.menu.show", key=self._key_label()), menu)
         action_show.triggered.connect(lambda: self.panel.show_panel(near_cursor=False))
         menu.addAction(action_show)
 
-        action_hide = QAction(i18n.t("tray.menu.hide"), menu)
+        action_hide = QAction(i18n.t("tray.menu.hide", key=self._key_label()), menu)
         action_hide.triggered.connect(self.close_panel)
         menu.addAction(action_hide)
 
@@ -171,8 +182,9 @@ class KnocknockController(QObject):
             "ask_selection": self.cfg.get("hotkeys", {}).get("ask_selection", ""),
         }
         self.input_listener.start(
-            interval_ms=int(self.cfg.get("hotkeys", {}).get("double_alt_interval_ms", 420)),
+            interval_ms=int(self.cfg.get("hotkeys", {}).get("double_tap_interval_ms", 420)),
             hotkeys={key: value for key, value in hotkeys.items() if value},
+            double_tap_key=double_tap_key(self.cfg),
         )
 
     def restart_listener(self) -> None:
@@ -183,15 +195,15 @@ class KnocknockController(QObject):
         if name == "screenshot":
             self.start_screenshot()
         elif name == "ask_selection":
-            self.on_double_alt()
+            self.on_double_tap()
 
     # ================================================================ selection
-    def on_double_alt(self) -> None:
-        """Double-tap Alt: close the panel if it is open, otherwise grab the selection and open it."""
+    def on_double_tap(self) -> None:
+        """Double-tap the trigger key: close the panel if open, else read the selection and open it."""
         if self.overlay.isVisible():
             return
 
-        if self.toggle_on_double_alt and self.panel.isVisible():
+        if self.toggle_on_double_tap and self.panel.isVisible():
             self.panel.hide_panel()
             return
 
@@ -236,8 +248,8 @@ class KnocknockController(QObject):
             # Switch language first, then theme: both rebuild the tray menu, and
             # the language has to come first.
             i18n.set_language(self.cfg.get("ui", {}).get("language"))
-            self.toggle_on_double_alt = bool(
-                self.cfg.get("behavior", {}).get("toggle_on_double_alt", True)
+            self.toggle_on_double_tap = bool(
+                self.cfg.get("behavior", {}).get("toggle_on_double_tap", True)
             )
             self.set_theme(self.cfg.get("ui", {}).get("theme", "light"), persist=False)
             self.panel.apply_config(self.cfg)
@@ -256,7 +268,7 @@ class KnocknockController(QObject):
         old objects have no reference and cannot be collected. (setToolTip does
         not create an object, so it is safe.)
         """
-        self.tray.setToolTip(i18n.t("app.tray_tooltip"))
+        self.tray.setToolTip(i18n.t("app.tray_tooltip", key=self._key_label()))
         old_menu = self.tray.contextMenu()
         self.tray.setContextMenu(self._build_menu())
         if old_menu is not None:
@@ -314,7 +326,7 @@ def main() -> int:
     if created or not str(cfg.get("api", {}).get("api_key", "")).strip():
         controller.tray.showMessage(
             i18n.t("notify.started.title"),
-            i18n.t("notify.started.body"),
+            i18n.t("notify.started.body", key=controller._key_label()),
             app_icon(64),
             6000,
         )

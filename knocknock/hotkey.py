@@ -1,12 +1,14 @@
-"""Global input monitoring: double-tap Alt detection plus system-wide hotkey registration.
+"""Global input monitoring: double-tap detection plus system-wide hotkey registration.
 
 Implementation: a low-level keyboard hook (WH_KEYBOARD_LL) together with
 RegisterHotKey, both running on a dedicated thread's message loop and reporting
 back to the main thread through Qt signals. No administrator rights required.
 
-The double-tap key is Alt rather than Ctrl: Ctrl is held for multi-selecting
-files in Explorer and for countless editing shortcuts, so a stray double tap is
-easy to produce by accident. A bare Alt tap is comparatively rare.
+Which modifier is double-tapped is a setting (`hotkeys.double_tap_key`), not a
+constant: which key is least disruptive depends on what you do all day. Ctrl and
+Alt are both held for things users do constantly — multi-selecting files, menu
+mnemonics — so neither is right for everyone, and any single key is accepted.
+The parsing and the virtual-key codes live in winapi.
 """
 from __future__ import annotations
 
@@ -14,12 +16,12 @@ import ctypes
 import threading
 import time
 from ctypes import wintypes
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from PySide6.QtCore import QObject, Signal
 
 from . import winapi
-from .winapi import LLKHF_INJECTED
+from .winapi import DOUBLE_TAP_DEFAULT_KEY, LLKHF_INJECTED
 
 user32 = winapi.user32
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -31,10 +33,6 @@ WM_SYSKEYDOWN = 0x0104
 WM_SYSKEYUP = 0x0105
 WM_HOTKEY = 0x0312
 WM_QUIT = 0x0012
-
-# VK_MENU / VK_LMENU / VK_RMENU. Both Alt keys count, which matches how the
-# Ctrl variant used to accept either one.
-VK_ALTS = {0x12, 0xA4, 0xA5}
 
 
 class KBDLLHOOKSTRUCT(ctypes.Structure):
@@ -69,21 +67,27 @@ kernel32.GetModuleHandleW.argtypes = (wintypes.LPCWSTR,)
 kernel32.GetModuleHandleW.restype = wintypes.HMODULE
 
 
+def vk_group_for(name: str) -> Set[int]:
+    """Virtual-key codes that count as `name`, falling back to the default key."""
+    return winapi.double_tap_key_codes(name)
+
+
 class GlobalInput(QObject):
     """Global input listener.
 
     Signals:
-        double_alt()           -- Alt was tapped twice
+        double_tap()           -- the configured modifier was tapped twice
         hotkey(name: str)      -- a named system hotkey was pressed; `name` is the
                                   name it was registered under
     """
 
-    double_alt = Signal()
+    double_tap = Signal()
     hotkey = Signal(str)
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
         self._interval = 0.42
+        self._vk_group: Set[int] = vk_group_for(DOUBLE_TAP_DEFAULT_KEY)
         self._hotkeys: List[tuple] = []          # [(id, name, mods, vk)]
         self._thread: Optional[threading.Thread] = None
         self._thread_id: int = 0
@@ -92,19 +96,21 @@ class GlobalInput(QObject):
         self._hook_proc = HOOKPROC(self._hook_callback)  # must stay referenced, or it gets GC'd
         self._running = False
 
-        # double-tap Alt state
-        self._pending_alt = False
+        # double-tap detection state
+        self._pending_tap = False
         self._first_press = 0.0
         self._reset_timer: Optional[threading.Timer] = None
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------ lifecycle
     def start(self, interval_ms: int = 420,
-              hotkeys: Optional[Dict[str, str]] = None) -> None:
+              hotkeys: Optional[Dict[str, str]] = None,
+              double_tap_key: str = DOUBLE_TAP_DEFAULT_KEY) -> None:
         """Start listening. `hotkeys` looks like {"screenshot": "ctrl+alt+a"}."""
         if self._running:
             return
         self._interval = max(0.15, interval_ms / 1000.0)
+        self._vk_group = vk_group_for(double_tap_key)
         self._hotkeys = []
         for index, (name, combo) in enumerate((hotkeys or {}).items()):
             parsed = winapi.parse_hotkey(combo)
@@ -171,21 +177,21 @@ class GlobalInput(QObject):
 
     def _on_key_down(self, vk: int) -> None:
         with self._lock:
-            if vk in VK_ALTS:
+            if vk in self._vk_group:
                 now = time.monotonic()
-                if self._pending_alt and (now - self._first_press) <= self._interval:
-                    self._pending_alt = False
+                if self._pending_tap and (now - self._first_press) <= self._interval:
+                    self._pending_tap = False
                     self._cancel_reset_timer()
-                    self.double_alt.emit()
+                    self.double_tap.emit()
                 else:
-                    self._pending_alt = True
+                    self._pending_tap = True
                     self._first_press = now
                     self._schedule_reset_timer()
             else:
-                # Some other key was pressed -> this Alt was part of a combo
-                # (Alt+Tab, Alt+F4, an Alt menu mnemonic), so it does not count
-                # as a double-tap.
-                self._pending_alt = False
+                # Some other key was pressed -> this modifier was part of a combo
+                # (Alt+Tab, a Ctrl+C, a Shift-click), so it does not count as a
+                # double-tap.
+                self._pending_tap = False
 
     # ------------------------------------------------------------ internal timers
     def _schedule_reset_timer(self) -> None:
@@ -204,14 +210,14 @@ class GlobalInput(QObject):
 
     def _on_reset_timeout(self) -> None:
         with self._lock:
-            self._pending_alt = False
+            self._pending_tap = False
             self._reset_timer = None
 
     def reset_state(self) -> None:
         """Clear the double-tap detection state (used on hotkey reload or in tests)."""
         with self._lock:
             self._cancel_reset_timer()
-            self._pending_alt = False
+            self._pending_tap = False
             self._first_press = 0.0
 
     # ------------------------------------------------------------ live config updates

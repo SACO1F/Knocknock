@@ -52,7 +52,7 @@ from . import capture as capture_mod
 from . import i18n
 from . import theme
 from . import widgets as w
-from .config import DEFAULT_IMAGE_PREVIEW, presets_for
+from .config import DEFAULT_IMAGE_PREVIEW, double_tap_key_label, presets_for
 from .llm import LLMWorker, build_user_content
 
 # ---------------------------------------------------------------- size constants
@@ -408,7 +408,12 @@ class KnockPanel(QWidget):
         if self._context_set:
             self._refresh_context_view(animate=False)
         else:
-            self._set_subtitle(i18n.t("panel.subtitle.long"), i18n.t("panel.subtitle.short"))
+            # The subtitle names the trigger key, so it has to follow the setting.
+            label = double_tap_key_label(self.cfg)
+            self._set_subtitle(
+                i18n.t("panel.subtitle.long", key=label),
+                i18n.t("panel.subtitle.short", key=label),
+            )
         self._refresh_compact()
         self._rebuild_chips()
 

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from . import i18n
+from .winapi import DOUBLE_TAP_DEFAULT_KEY, format_double_tap_key, parse_double_tap_key
 
 
 def _app_dir() -> Path:
@@ -97,12 +98,14 @@ _KNOWN_SYSTEM_PROMPTS = {
     ),
 }
 
-# Keys that were renamed. The double-tap trigger moved from Ctrl to Alt (Ctrl was
-# too easy to fire by accident while multi-selecting files), and the settings
-# went with it.
+# Keys that were renamed. The double-tap trigger was Ctrl, then Alt, and is now
+# whichever modifier the user picks (`double_tap_key`), so the settings that
+# named a specific key were renamed twice and both generations still migrate.
 _KEY_ALIASES = (
-    ("hotkeys", "double_ctrl_interval_ms", "double_alt_interval_ms"),
-    ("behavior", "toggle_on_double_ctrl", "toggle_on_double_alt"),
+    ("hotkeys", "double_alt_interval_ms", "double_tap_interval_ms"),
+    ("behavior", "toggle_on_double_alt", "toggle_on_double_tap"),
+    ("hotkeys", "double_ctrl_interval_ms", "double_tap_interval_ms"),
+    ("behavior", "toggle_on_double_ctrl", "toggle_on_double_tap"),
 )
 
 DEFAULT_CONFIG: Dict[str, Any] = {
@@ -132,7 +135,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "last_size": None,     # size the user dragged out, reused on next launch
     },
     "hotkeys": {
-        "double_alt_interval_ms": 420,
+        "double_tap_key": DOUBLE_TAP_DEFAULT_KEY,   # any single key, e.g. alt / a / f2
+        "double_tap_interval_ms": 420,
         "screenshot": "ctrl+alt+a",
         "ask_selection": "ctrl+alt+q",
     },
@@ -141,7 +145,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "restore_clipboard": False,
         "auto_send_on_preset": True,
         "close_on_esc": True,
-        "toggle_on_double_alt": True,   # double Alt closes the panel while it is open
+        "toggle_on_double_tap": True,   # double-tap closes the panel while it is open
         "max_history_turns": 6,
     },
     "presets": PRESETS_ZH,
@@ -197,6 +201,15 @@ def _normalize(cfg: Dict[str, Any]) -> None:
     ui["language"] = language
     if str(ui.get("image_preview", "")).lower() not in IMAGE_PREVIEWS:
         ui["image_preview"] = DEFAULT_IMAGE_PREVIEW
+
+    # An unparseable double-tap key would leave the hook matching nothing at all,
+    # so a misspelled or hand-edited value falls back to the default instead of
+    # silently disabling the trigger.
+    hotkeys = cfg.setdefault("hotkeys", {})
+    tap_key = str(hotkeys.get("double_tap_key", "")).strip().lower()
+    hotkeys["double_tap_key"] = (
+        tap_key if parse_double_tap_key(tap_key) is not None else DOUBLE_TAP_DEFAULT_KEY
+    )
 
     # Older configs have no presets_en; fill it with the defaults. An empty list
     # is kept as-is, because clearing it was the user's own choice.
@@ -267,6 +280,22 @@ def presets_for(cfg: Dict[str, Any], language: Optional[str] = None) -> List[Dic
     if not isinstance(value, list):
         value = cfg.get("presets") or []
     return [item for item in value if isinstance(item, dict)]
+
+
+def double_tap_key(cfg: Dict[str, Any]) -> str:
+    """The configured double-tap key name, guaranteed to be a key the hook knows.
+
+    _normalize() already repairs a bad value; this repeats the check so callers
+    (the panel subtitle, the tray menu) can interpolate it without caring whether
+    the config they hold has been through normalize.
+    """
+    value = str((cfg or {}).get("hotkeys", {}).get("double_tap_key", "")).strip().lower()
+    return value if parse_double_tap_key(value) is not None else DOUBLE_TAP_DEFAULT_KEY
+
+
+def double_tap_key_label(cfg: Dict[str, Any]) -> str:
+    """Presentable name for the configured trigger key, for menus and subtitles."""
+    return format_double_tap_key(double_tap_key(cfg))
 
 
 def get(cfg: Dict[str, Any], path: str, default: Any = None) -> Any:

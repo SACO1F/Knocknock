@@ -34,6 +34,16 @@ MOD_NOREPEAT = 0x4000
 
 LLKHF_INJECTED = 0x00000010
 
+# ---------------------------------------------------------------- double-tap key
+# Which key the user double-taps to open the panel is a setting, not a constant.
+# Ctrl and Alt are both held for things people do constantly — multi-selecting
+# files, menu mnemonics — so neither suits everyone, and the trade-off moves with
+# the choice: a letter key fires while you type, a function key does not.
+#
+# Win is deliberately not offered: a lone Win press opens the Start menu, so a
+# double-tap would be far more disruptive than the Alt menu flash.
+DOUBLE_TAP_DEFAULT_KEY = "alt"
+
 
 # ---------------------------------------------------------------- structs
 class MOUSEINPUT(ctypes.Structure):
@@ -115,6 +125,7 @@ def clipboard_sequence() -> int:
 _NAMED_KEYS = {
     "ESC": 0x1B, "ESCAPE": 0x1B, "TAB": 0x09, "SPACE": 0x20,
     "ENTER": 0x0D, "RETURN": 0x0D, "BACKSPACE": 0x08, "DELETE": 0x2E,
+    "INSERT": 0x2D, "CAPSLOCK": 0x14, "NUMLOCK": 0x90, "SCROLLLOCK": 0x91,
     "HOME": 0x24, "END": 0x23, "PAGEUP": 0x21, "PAGEDOWN": 0x22,
     "LEFT": 0x25, "UP": 0x26, "RIGHT": 0x27, "DOWN": 0x28,
     "`": 0xC0, "-": 0xBD, "=": 0xBB, "[": 0xDB, "]": 0xDD,
@@ -122,6 +133,59 @@ _NAMED_KEYS = {
 }
 for _i in range(1, 25):
     _NAMED_KEYS[f"F{_i}"] = 0x6F + _i  # F1 = 0x70
+for _i in range(10):
+    _NAMED_KEYS[f"NUM{_i}"] = 0x60 + _i  # VK_NUMPAD0
+
+
+def parse_double_tap_key(name: str) -> Optional[int]:
+    """Parse a single key name ("a", "f2", "capslock", "alt") into a virtual-key code.
+
+    Unlike parse_hotkey this takes *one* key and no modifiers: a double-tap
+    trigger is one key pressed twice, not a combination. Returns None for
+    anything that is not a single recognised key, so a typo is caught instead of
+    silently disabling the trigger.
+    """
+    token = (name or "").strip().lower()
+    if not token or "+" in token:
+        return None
+    if token in ("ctrl", "control"):
+        return VK_CONTROL
+    if token in ("alt", "menu"):
+        return VK_MENU
+    if token in ("shift",):
+        return VK_SHIFT
+    if token.upper() in _NAMED_KEYS:
+        return _NAMED_KEYS[token.upper()]
+    if len(token) == 1 and token.isalnum():
+        return ord(token.upper())
+    return None
+
+
+def double_tap_key_codes(name: str) -> set:
+    """Every virtual-key code the hook must treat as `name`.
+
+    A modifier resolves to all the codes the low-level hook may report for it —
+    the generic code plus the left and right instances — so either physical key
+    works and the two can be paired with each other. An unparseable name falls
+    back to the default rather than to an empty set, which would leave the
+    trigger matching nothing at all.
+    """
+    vk = parse_double_tap_key(name)
+    if vk is None:
+        vk = parse_double_tap_key(DOUBLE_TAP_DEFAULT_KEY)
+    left_right = {
+        VK_MENU: (0xA4, 0xA5),      # VK_LMENU / VK_RMENU
+        VK_CONTROL: (0xA2, 0xA3),   # VK_LCONTROL / VK_RCONTROL
+        VK_SHIFT: (0xA0, 0xA1),     # VK_LSHIFT / VK_RSHIFT
+    }.get(vk)
+    return {vk, *left_right} if left_right else {vk}
+
+
+def format_double_tap_key(name: str) -> str:
+    """Presentable name for the trigger key, in the same style as format_hotkey."""
+    if not name or parse_double_tap_key(name) is None:
+        name = DOUBLE_TAP_DEFAULT_KEY
+    return name.strip().upper()
 
 
 def parse_hotkey(text: str) -> Optional[Tuple[int, int]]:

@@ -39,6 +39,7 @@ from .config import (
     presets_key,
     save_config,
 )
+from .winapi import DOUBLE_TAP_DEFAULT_KEY, format_double_tap_key, parse_double_tap_key
 
 
 class SettingsDialog(QDialog):
@@ -348,18 +349,33 @@ class SettingsDialog(QDialog):
         behavior = self.cfg["behavior"]
         hotkeys = self.cfg["hotkeys"]
 
-        self.double_alt_spin = QSpinBox(page)
-        self.double_alt_spin.setRange(150, 1000)
-        self.double_alt_spin.setSingleStep(10)
-        self.double_alt_spin.setSuffix(" ms")
-        self.double_alt_spin.setValue(int(hotkeys.get("double_alt_interval_ms", 420)))
+        # Any single key the user wants, typed by name — the same free-form style
+        # as the screenshot / ask hotkeys above. parse_double_tap_key() is the
+        # single source of truth for what is accepted; _normalize() repairs an
+        # unparseable value on the next load, and the hint says so up front.
+        self.double_tap_key_edit = QLineEdit(
+            str(hotkeys.get("double_tap_key", DOUBLE_TAP_DEFAULT_KEY)), page
+        )
+        self.double_tap_key_edit.textChanged.connect(self._update_double_tap_key_hint)
+
+        self.double_tap_key_hint = QLabel("", page)
+        self.double_tap_key_hint.setObjectName("Hint")
+        self.double_tap_key_hint.setWordWrap(True)
+
+        self.double_tap_spin = QSpinBox(page)
+        self.double_tap_spin.setRange(150, 1000)
+        self.double_tap_spin.setSingleStep(10)
+        self.double_tap_spin.setSuffix(" ms")
+        self.double_tap_spin.setValue(int(hotkeys.get("double_tap_interval_ms", 420)))
 
         self.screenshot_edit = QLineEdit(str(hotkeys.get("screenshot", "ctrl+alt+a")), page)
         self.ask_edit = QLineEdit(str(hotkeys.get("ask_selection", "ctrl+alt+q")), page)
 
         form = QFormLayout()
         form.setSpacing(10)
-        form.addRow(self._label(i18n.t("settings.behavior.interval")), self.double_alt_spin)
+        form.addRow(self._label(i18n.t("settings.behavior.double_tap_key")), self.double_tap_key_edit)
+        form.addRow("", self.double_tap_key_hint)
+        form.addRow(self._label(i18n.t("settings.behavior.interval")), self.double_tap_spin)
         form.addRow(self._label(i18n.t("settings.behavior.screenshot_hotkey")), self.screenshot_edit)
         form.addRow(self._label(i18n.t("settings.behavior.ask_hotkey")), self.ask_edit)
         layout.addLayout(form)
@@ -376,12 +392,28 @@ class SettingsDialog(QDialog):
         self.esc_check.setChecked(bool(behavior.get("close_on_esc", True)))
         layout.addWidget(self.esc_check)
 
-        self.toggle_alt_check = QCheckBox(i18n.t("settings.behavior.toggle_double_alt"), page)
-        self.toggle_alt_check.setChecked(bool(behavior.get("toggle_on_double_alt", True)))
-        layout.addWidget(self.toggle_alt_check)
+        self.toggle_tap_check = QCheckBox(i18n.t("settings.behavior.toggle_double_tap"), page)
+        self.toggle_tap_check.setChecked(bool(behavior.get("toggle_on_double_tap", True)))
+        layout.addWidget(self.toggle_tap_check)
 
         layout.addStretch(1)
         return page
+
+    def _update_double_tap_key_hint(self) -> None:
+        """Say up front what the typed name will be read as.
+
+        The value is saved as typed either way (overwriting the user's input in a
+        modal would be worse); _normalize() repairs it on the next load, and the
+        running app falls back to the default key until then.
+        """
+        name = self.double_tap_key_edit.text().strip().lower()
+        good = parse_double_tap_key(name) is not None
+        self.double_tap_key_hint.setText(
+            i18n.t(
+                "settings.behavior.double_tap_key_tip" if good else "settings.behavior.double_tap_key_bad",
+                key=format_double_tap_key(name),
+            )
+        )
 
     # ---------------------------------------------------------------- helpers
     @staticmethod
@@ -430,10 +462,13 @@ class SettingsDialog(QDialog):
         behavior["restore_clipboard"] = bool(self.restore_check.isChecked())
         behavior["auto_send_on_preset"] = bool(self.autosend_check.isChecked())
         behavior["close_on_esc"] = bool(self.esc_check.isChecked())
-        behavior["toggle_on_double_alt"] = bool(self.toggle_alt_check.isChecked())
+        behavior["toggle_on_double_tap"] = bool(self.toggle_tap_check.isChecked())
 
         hotkeys = cfg["hotkeys"]
-        hotkeys["double_alt_interval_ms"] = int(self.double_alt_spin.value())
+        # Stored as typed (lowercased): _normalize() repairs an unparseable value
+        # on the next load, and the live hint already told the user it was wrong.
+        hotkeys["double_tap_key"] = self.double_tap_key_edit.text().strip().lower()
+        hotkeys["double_tap_interval_ms"] = int(self.double_tap_spin.value())
         hotkeys["screenshot"] = self.screenshot_edit.text().strip()
         hotkeys["ask_selection"] = self.ask_edit.text().strip()
         return cfg

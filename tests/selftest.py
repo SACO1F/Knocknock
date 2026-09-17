@@ -17,7 +17,7 @@ Covers:
  12. The shadow is not cut by the window edge + tooltips follow the theme
  13. Drag-to-resize (hot zones on the card) + the result area is not clipped after a manual resize
  14. Chinese/English switching (string tables / panel and tray retranslation / per-language presets)
- 15. Pinned header and double-Alt close (title bar does not drift / double-tap Alt toggles the panel)
+ 15. Pinned header and double-tap close (title bar does not drift / the configurable key toggles the panel)
  16. Screenshot growth (a new picture grows the panel into view step by step, and it fits on screen)
  17. Output token budget (the default is large enough; 0 means "let the server decide")
  18. Text / vision model split (screenshots use the vision model; the preview box is respected)
@@ -603,6 +603,7 @@ def t_tray() -> None:
     """
     import main as entry
     from knocknock import i18n
+    from knocknock.config import double_tap_key_label
 
     def flush() -> None:
         # processEvents() does not handle DeferredDelete by default; dispatch it explicitly
@@ -632,7 +633,12 @@ def t_tray() -> None:
         # Match against the active language rather than hard-coding English, so the
         # case stays valid whichever language the config is in.
         assert any(text == i18n.t("tray.menu.settings") for text in labels), labels
-        assert any(text == i18n.t("tray.menu.hide") for text in labels), labels
+        # tray.menu.hide carries a {key} placeholder now, so it has to be
+        # expanded with the configured trigger key before it can be compared.
+        assert any(
+            text == i18n.t("tray.menu.hide", key=double_tap_key_label(controller.cfg))
+            for text in labels
+        ), labels
 
         # The menu content should refresh with the config (a changed hotkey must show up)
         controller.cfg["hotkeys"]["screenshot"] = "ctrl+shift+x"
@@ -1232,8 +1238,8 @@ def t_header_pinned() -> None:
     panel.deleteLater()
 
 
-def t_double_alt_closes() -> None:
-    """Double-tap Alt toggles the panel: close it if open, otherwise read the selection and open it."""
+def t_double_tap_closes() -> None:
+    """Double-tapping the trigger key toggles the panel: close it if open, else read the selection."""
     import main as entry
 
     controller = entry.KnocknockController(QApplication.instance())
@@ -1247,20 +1253,20 @@ def t_double_alt_closes() -> None:
         try:
             # --- closed -> double-tap Alt opens it
             assert not panel.isVisible()
-            controller.on_double_alt()
+            controller.on_double_tap()
             app.processEvents()
             assert panel.isVisible(), "double-tapping Alt while closed should open the panel"
             assert captured, "opening should read the selection once"
 
             # --- open -> double-tap Alt closes it, without reading the selection again
             captured.clear()
-            controller.on_double_alt()
+            controller.on_double_tap()
             app.processEvents()
             assert not panel.isVisible(), "double-tapping Alt while open should close the panel"
             assert not captured, "closing should not read the selection again"
 
             # --- double-tap again -> opens again (a toggle, not one-shot)
-            controller.on_double_alt()
+            controller.on_double_tap()
             app.processEvents()
             assert panel.isVisible()
             assert captured, "reopening should still read the selection"
@@ -1270,25 +1276,25 @@ def t_double_alt_closes() -> None:
             assert not panel.isVisible(), "close_panel() should hide the panel"
 
             # --- with the toggle off, restore the old behaviour: double-tap re-reads while open
-            controller.toggle_on_double_alt = False
-            controller.on_double_alt()
+            controller.toggle_on_double_tap = False
+            controller.on_double_tap()
             app.processEvents()
             assert panel.isVisible()
             captured.clear()
-            controller.on_double_alt()
+            controller.on_double_tap()
             app.processEvents()
             assert panel.isVisible(), "with the toggle off, double-tapping Alt must not close the panel"
             assert captured, "with the toggle off, double-tapping Alt should re-read the selection"
 
             # --- the config option must persist and be readable/writable from Settings
             from knocknock.config import DEFAULT_CONFIG
-            assert DEFAULT_CONFIG["behavior"]["toggle_on_double_alt"] is True
+            assert DEFAULT_CONFIG["behavior"]["toggle_on_double_tap"] is True
             from knocknock.settings_dialog import SettingsDialog
 
             dialog = SettingsDialog(controller.cfg)
-            assert dialog.toggle_alt_check.isChecked()
-            dialog.toggle_alt_check.setChecked(False)
-            assert dialog._collect()["behavior"]["toggle_on_double_alt"] is False
+            assert dialog.toggle_tap_check.isChecked()
+            dialog.toggle_tap_check.setChecked(False)
+            assert dialog._collect()["behavior"]["toggle_on_double_tap"] is False
             dialog.deleteLater()
         finally:
             entry.capture_selection = original_capture
@@ -1300,63 +1306,191 @@ def t_double_alt_closes() -> None:
         controller.overlay.deleteLater()
 
 
-def t_double_alt_detection() -> None:
-    """The hook logic must read two Alt taps as a double-tap, and Alt+key as a combo.
+def t_double_tap_detection() -> None:
+    """The hook logic must double-tap whatever key the config names, and nothing else.
 
     GlobalInput._on_key_down is driven directly, so no real keyboard hook is ever
     installed and the test cannot leak a global hook onto the desktop.
     """
-    from knocknock.hotkey import VK_ALTS, GlobalInput
-
-    # VK_MENU / VK_LMENU / VK_RMENU: both physical Alt keys count.
-    assert VK_ALTS == {0x12, 0xA4, 0xA5}, VK_ALTS
+    from knocknock.hotkey import GlobalInput, vk_group_for
+    from knocknock.winapi import DOUBLE_TAP_DEFAULT_KEY, parse_double_tap_key
+    assert DOUBLE_TAP_DEFAULT_KEY == "alt", DOUBLE_TAP_DEFAULT_KEY
+    # A modifier covers every code the low-level hook can report for it.
+    assert vk_group_for("alt") == {0x12, 0xA4, 0xA5}
+    assert vk_group_for("ctrl") == {0x11, 0xA2, 0xA3}
+    assert vk_group_for("shift") == {0x10, 0xA0, 0xA1}
+    # A plain key is just itself.
+    assert vk_group_for("a") == {0x41}
+    assert vk_group_for("capslock") == {0x14}
+    assert vk_group_for("f2") == {0x71}
+    # An unparseable name falls back to the default instead of matching nothing.
+    assert vk_group_for("nonsense") == vk_group_for(DOUBLE_TAP_DEFAULT_KEY)
 
     listener = GlobalInput()
     fired: list = []
-    listener.double_alt.connect(lambda: fired.append(1))
+    listener.double_tap.connect(lambda: fired.append(1))
     listener._interval = 0.42
     try:
-        # A single tap is not enough; the second one fires.
-        listener._on_key_down(0x12)
-        assert not fired, "one Alt tap must not fire"
-        listener._on_key_down(0x12)
-        assert len(fired) == 1, "two Alt taps within the window should fire once"
+        def taps(*keys) -> None:
+            for vk in keys:
+                listener._on_key_down(vk)
+
+        def choose(name: str) -> None:
+            listener.reset_state()
+            listener._vk_group = vk_group_for(name)
+
+        # --- the default (Alt): one tap is not enough, the second fires
+        listener._vk_group = vk_group_for(DOUBLE_TAP_DEFAULT_KEY)
+        taps(0x12)
+        assert not fired, "one tap must not fire"
+        taps(0x12)
+        assert len(fired) == 1, "two taps within the window should fire once"
 
         # The pair is consumed: a third tap starts over instead of firing again.
-        listener._on_key_down(0x12)
+        taps(0x12)
         assert len(fired) == 1, "a third tap must not fire again"
 
-        # Alt + another key is a combination, not a double-tap.
-        listener.reset_state()
-        listener._on_key_down(0x12)   # Alt down
-        listener._on_key_down(0x09)   # Tab down -> Alt+Tab
-        listener._on_key_down(0x12)   # Alt again, but the pending state was cancelled
+        # Modifier + another key is a combination, not a double-tap.
+        choose("alt")
+        taps(0x12, 0x09, 0x12)          # Alt, Tab, Alt -> Alt+Tab
         assert len(fired) == 1, "Alt+Tab must not be mistaken for a double-tap"
 
-        # Ctrl is no longer a trigger at all.
-        listener.reset_state()
-        listener._on_key_down(0x11)
-        listener._on_key_down(0x11)
-        assert len(fired) == 1, "Ctrl must no longer trigger the double-tap"
-
-        # Either physical Alt key may be paired with the other.
-        listener.reset_state()
-        listener._on_key_down(0xA4)   # left Alt
-        listener._on_key_down(0xA5)   # right Alt
+        # Either physical key may be paired with the other.
+        choose("alt")
+        taps(0xA4, 0xA5)                # left Alt then right Alt
         assert len(fired) == 2, "left and right Alt should pair up"
 
         # Two taps further apart than the interval do not count.
-        listener.reset_state()
-        listener._on_key_down(0x12)
+        choose("alt")
+        taps(0x12)
         listener._first_press -= 10.0   # pretend the first tap was long ago
-        listener._on_key_down(0x12)
+        taps(0x12)
         assert len(fired) == 2, "taps outside the interval must not fire"
+
+        # --- choosing a different key really does move the trigger
+        choose("ctrl")
+        taps(0x12, 0x12)                # Alt is no longer the trigger
+        assert len(fired) == 2, "Alt must stop firing once Ctrl is chosen"
+        taps(0x11, 0x11)                # Ctrl now is
+        assert len(fired) == 3, "Ctrl should fire once chosen"
+        taps(0xA2, 0xA3)                # left then right Ctrl
+        assert len(fired) == 4, "both physical Ctrl keys should count"
+
+        choose("shift")
+        taps(0x11, 0x11)                # Ctrl no longer fires
+        assert len(fired) == 4, "Ctrl must stop firing once Shift is chosen"
+        taps(0x10, 0x10)
+        assert len(fired) == 5, "Shift should fire once chosen"
+        taps(0xA0, 0xA1)                # left then right Shift
+        assert len(fired) == 6, "both physical Shift keys should count"
+
+        # --- a plain key that is not a modifier at all
+        choose("capslock")
+        taps(0x12, 0x12)                # Alt no longer fires
+        assert len(fired) == 6, "Alt must stop firing once CapsLock is chosen"
+        taps(0x14, 0x14)                # CapsLock now is
+        assert len(fired) == 7, "an arbitrary plain key should be usable as the trigger"
+
+        # A combination can never be the trigger, so it is rejected at parse time.
+        assert parse_double_tap_key("ctrl+alt+a") is None
+        assert parse_double_tap_key("") is None
+        assert parse_double_tap_key("notakey") is None
     finally:
         listener.reset_state()
 
 
+def t_double_tap_key_setting() -> None:
+    """The key is a setting, and every place that names it must follow the setting.
+
+    A hardcoded "double-tap Alt" would be a lie the moment the user picks
+    something else, so the subtitle, the tray tooltip and the tray menu are all
+    checked against the chosen key. Any single key is accepted, not just the
+    modifiers, so a plain key is covered here too.
+    """
+    import main as entry
+    from knocknock import i18n
+    from knocknock.config import double_tap_key as read_tap_key
+    from knocknock.config import double_tap_key_label, load_config
+    from knocknock.hotkey import vk_group_for
+
+    i18n.set_language("en")
+    try:
+        # An unparseable name is repaired rather than left to disable the trigger.
+        assert read_tap_key({"hotkeys": {"double_tap_key": "nope"}}) == "alt"
+        assert read_tap_key({"hotkeys": {"double_tap_key": "ctrl+alt+a"}}) == "alt"
+        assert read_tap_key({"hotkeys": {}}) == "alt"
+        # Case is normalised, and any single key is accepted.
+        assert read_tap_key({"hotkeys": {"double_tap_key": "SHIFT"}}) == "shift"
+        assert read_tap_key({"hotkeys": {"double_tap_key": "CapsLock"}}) == "capslock"
+        assert read_tap_key({"hotkeys": {"double_tap_key": "F5"}}) == "f5"
+        assert double_tap_key_label({"hotkeys": {"double_tap_key": "capslock"}}) == "CAPSLOCK"
+
+        for name, label in (("alt", "ALT"), ("ctrl", "CTRL"), ("shift", "SHIFT"),
+                            ("capslock", "CAPSLOCK")):
+            cfg = load_config()
+            cfg["hotkeys"]["double_tap_key"] = name
+
+            controller = entry.KnocknockController(QApplication.instance())
+            try:
+                # The constructor already started the listener from the config on
+                # disk, so it is restarted here against the key this loop tests.
+                controller.input_listener.stop()
+                controller.cfg = cfg
+                controller.start_listener()
+                controller.panel.apply_config(cfg)
+                # apply_config() alone does not re-render the header copy.
+                controller.panel.retranslate()
+                QApplication.instance().processEvents()
+
+                assert controller._key_label() == label
+                assert label in controller.panel.subtitle_label.text(), (
+                    f"the subtitle must name {label}: {controller.panel.subtitle_label.text()!r}"
+                )
+                controller._rebuild_tray_menu()
+                assert label in controller.tray.toolTip(), (
+                    f"the tray tooltip must name {label}: {controller.tray.toolTip()!r}"
+                )
+                menu_labels = [a.text() for a in controller.tray.contextMenu().actions()]
+                assert any(label in text for text in menu_labels), (
+                    f"a tray entry must name {label}: {menu_labels}"
+                )
+                # The listener is given the key the config asks for.
+                assert controller.input_listener._vk_group == vk_group_for(name)
+            finally:
+                controller.panel.hide()
+                controller.input_listener.stop()
+                controller.tray.hide()
+                controller.panel.deleteLater()
+                controller.overlay.deleteLater()
+
+        # The field is free text: whatever is typed is saved as typed, and the
+        # hint says whether the hook can actually match it.
+        from knocknock.settings_dialog import SettingsDialog
+
+        dialog = SettingsDialog(load_config())
+        dialog.double_tap_key_edit.setText("f5")
+        QApplication.instance().processEvents()
+        assert "F5" in dialog.double_tap_key_hint.text(), dialog.double_tap_key_hint.text()
+        assert dialog._collect()["hotkeys"]["double_tap_key"] == "f5"
+
+        # An unrecognised name is stored as typed, but the hint says it will not work.
+        dialog.double_tap_key_edit.setText("notakey")
+        QApplication.instance().processEvents()
+        assert "⚠" in dialog.double_tap_key_hint.text(), dialog.double_tap_key_hint.text()
+        assert dialog._collect()["hotkeys"]["double_tap_key"] == "notakey"
+        # ...and load_config() repairs it instead of disabling the trigger.
+        from knocknock.config import _normalize
+        broken = load_config()
+        broken["hotkeys"]["double_tap_key"] = "notakey"
+        _normalize(broken)
+        assert broken["hotkeys"]["double_tap_key"] == "alt"
+        dialog.deleteLater()
+    finally:
+        i18n.set_language("zh")
+
+
 def t_config_key_migration() -> None:
-    """A config written before the Alt switch must keep the values the user chose.
+    """A config written by an earlier version must keep the values the user chose.
 
     The rename has to happen *before* the merge with DEFAULT_CONFIG. Afterwards
     the defaults have already supplied the new keys, and a value the user picked
@@ -1370,50 +1504,72 @@ def t_config_key_migration() -> None:
     import knocknock.config as config_module
     from knocknock.config import DEFAULT_CONFIG, _rename_legacy_keys
 
+    # Both earlier generations of the name have to end up on the current one:
+    # Ctrl (1.3.0 and earlier) and Alt (1.4.0).
+    generations = (
+        {"hotkeys": {"double_ctrl_interval_ms": 500}, "behavior": {"toggle_on_double_ctrl": False}},
+        {"hotkeys": {"double_alt_interval_ms": 500}, "behavior": {"toggle_on_double_alt": False}},
+    )
+    for legacy in generations:
+        migrated = _rename_legacy_keys(legacy)
+        assert migrated["hotkeys"]["double_tap_interval_ms"] == 500, migrated["hotkeys"]
+        assert "double_ctrl_interval_ms" not in migrated["hotkeys"]
+        assert "double_alt_interval_ms" not in migrated["hotkeys"]
+        assert migrated["behavior"]["toggle_on_double_tap"] is False, migrated["behavior"]
+        assert "toggle_on_double_ctrl" not in migrated["behavior"]
+        assert "toggle_on_double_alt" not in migrated["behavior"]
+
+    # Unrelated keys survive, and the input dict is copied rather than mutated.
     legacy = {
         "hotkeys": {"double_ctrl_interval_ms": 500, "screenshot": "ctrl+alt+a"},
         "behavior": {"toggle_on_double_ctrl": False, "close_on_esc": True},
     }
-
     migrated = _rename_legacy_keys(legacy)
-    assert migrated["hotkeys"]["double_alt_interval_ms"] == 500, migrated["hotkeys"]
-    assert "double_ctrl_interval_ms" not in migrated["hotkeys"], "the old key must be dropped"
-    assert migrated["behavior"]["toggle_on_double_alt"] is False, migrated["behavior"]
-    assert "toggle_on_double_ctrl" not in migrated["behavior"], "the old key must be dropped"
-
-    # Unrelated keys survive, and the input dict is copied rather than mutated.
     assert migrated["hotkeys"]["screenshot"] == "ctrl+alt+a"
     assert migrated["behavior"]["close_on_esc"] is True
     assert "double_ctrl_interval_ms" in legacy["hotkeys"], "the caller's dict must not be modified"
 
-    # If both names are present the explicit new one wins.
-    both = {"hotkeys": {"double_alt_interval_ms": 300, "double_ctrl_interval_ms": 500}}
-    assert _rename_legacy_keys(both)["hotkeys"]["double_alt_interval_ms"] == 300
+    # If several names are present the newest one wins.
+    both = {"hotkeys": {"double_tap_interval_ms": 300, "double_alt_interval_ms": 400,
+                        "double_ctrl_interval_ms": 500}}
+    assert _rename_legacy_keys(both)["hotkeys"]["double_tap_interval_ms"] == 300
+    older = {"hotkeys": {"double_alt_interval_ms": 400, "double_ctrl_interval_ms": 500}}
+    assert _rename_legacy_keys(older)["hotkeys"]["double_tap_interval_ms"] == 400, "Alt beats Ctrl"
 
-    # The shipped defaults only know the new names.
-    assert "double_alt_interval_ms" in DEFAULT_CONFIG["hotkeys"]
+    # The shipped defaults only know the current names.
+    assert "double_tap_interval_ms" in DEFAULT_CONFIG["hotkeys"]
+    assert "double_tap_key" in DEFAULT_CONFIG["hotkeys"]
+    assert "double_alt_interval_ms" not in DEFAULT_CONFIG["hotkeys"]
     assert "double_ctrl_interval_ms" not in DEFAULT_CONFIG["hotkeys"]
-    assert "toggle_on_double_alt" in DEFAULT_CONFIG["behavior"]
+    assert "toggle_on_double_tap" in DEFAULT_CONFIG["behavior"]
+    assert "toggle_on_double_alt" not in DEFAULT_CONFIG["behavior"]
     assert "toggle_on_double_ctrl" not in DEFAULT_CONFIG["behavior"]
 
-    # End to end: a legacy file on disk loads under the new names.
-    with tempfile.TemporaryDirectory() as tmp:
-        legacy_file = Path(tmp) / "config.json"
-        legacy_file.write_text(json.dumps(legacy), encoding="utf-8")
+    # End to end: a legacy file on disk loads under the new names, and its key
+    # choice is preserved rather than reset to the default. A plain (non-modifier)
+    # key is covered too, because the key name is free text now.
+    for legacy, chosen in zip(generations, ("shift", "capslock")):
+        legacy = dict(legacy, hotkeys=dict(legacy["hotkeys"], double_tap_key=chosen))
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy_file = Path(tmp) / "config.json"
+            legacy_file.write_text(json.dumps(legacy), encoding="utf-8")
 
-        original_config = config_module.CONFIG_PATH
-        original_example = config_module.EXAMPLE_PATH
-        config_module.CONFIG_PATH = legacy_file
-        config_module.EXAMPLE_PATH = Path(tmp) / "no-such-example.json"
-        try:
-            cfg = config_module.load_config()
-            assert cfg["hotkeys"]["double_alt_interval_ms"] == 500, cfg["hotkeys"]
-            assert cfg["behavior"]["toggle_on_double_alt"] is False, cfg["behavior"]
-            assert "double_ctrl_interval_ms" not in cfg["hotkeys"]
-            assert "toggle_on_double_ctrl" not in cfg["behavior"]
-        finally:
-            config_module.CONFIG_PATH = original_config
-            config_module.EXAMPLE_PATH = original_example
+            original_config = config_module.CONFIG_PATH
+            original_example = config_module.EXAMPLE_PATH
+            config_module.CONFIG_PATH = legacy_file
+            config_module.EXAMPLE_PATH = Path(tmp) / "no-such-example.json"
+            try:
+                cfg = config_module.load_config()
+                assert cfg["hotkeys"]["double_tap_interval_ms"] == 500, cfg["hotkeys"]
+                assert cfg["behavior"]["toggle_on_double_tap"] is False, cfg["behavior"]
+                assert cfg["hotkeys"]["double_tap_key"] == chosen, cfg["hotkeys"]
+                assert "double_ctrl_interval_ms" not in cfg["hotkeys"]
+                assert "double_alt_interval_ms" not in cfg["hotkeys"]
+                assert "toggle_on_double_ctrl" not in cfg["behavior"]
+                assert "toggle_on_double_alt" not in cfg["behavior"]
+            finally:
+                config_module.CONFIG_PATH = original_config
+                config_module.EXAMPLE_PATH = original_example
 
 
 # ==================================================================== 16 screenshot growth
@@ -1709,7 +1865,7 @@ def main() -> int:
     section("1. Config loading and merging")
     case("config read / default fill-in / dotted lookup", t_config)
     case("frozen build stores config next to the executable", t_config_paths_frozen)
-    case("legacy Ctrl keys migrate to the Alt names", t_config_key_migration)
+    case("legacy trigger keys migrate to the current names", t_config_key_migration)
 
     section("2. Hotkey parsing")
     case("combo and function key parsing", t_hotkey_parse)
@@ -1751,10 +1907,11 @@ def main() -> int:
     section("14. Chinese / English switching")
     case("string tables / panel retranslation / per-language presets", lambda: t_i18n(app))
 
-    section("15. Pinned header and double-Alt close")
+    section("15. Pinned header and double-tap close")
     case("title bar stays pinned (no drift as the window grows)", t_header_pinned)
-    case("double-tap Alt toggles the panel + tray close entry", t_double_alt_closes)
-    case("Alt pair fires; Alt+key and Ctrl do not", t_double_alt_detection)
+    case("double-tap key toggles the panel + tray close entry", t_double_tap_closes)
+    case("chosen key fires; other keys and combos do not", t_double_tap_detection)
+    case("subtitle / tray / tooltip follow the configured key", t_double_tap_key_setting)
 
     section("16. Screenshot growth")
     case("a new picture grows the panel into view step by step", t_screenshot_growth)

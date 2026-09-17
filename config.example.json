@@ -23,7 +23,8 @@
     "last_size": null
   },
   "hotkeys": {
-    "double_alt_interval_ms": 420,
+    "double_tap_key": "alt",
+    "double_tap_interval_ms": 420,
     "screenshot": "ctrl+alt+a",
     "ask_selection": "ctrl+alt+q"
   },
@@ -32,7 +33,7 @@
     "restore_clipboard": false,
     "auto_send_on_preset": true,
     "close_on_esc": true,
-    "toggle_on_double_alt": true,
+    "toggle_on_double_tap": true,
     "max_history_turns": 6
   },
   "presets": [
