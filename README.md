@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img alt="version" src="https://img.shields.io/badge/version-1.5.0-0A84FF">
+  <a href="https://github.com/SACO1F/Knocknock/tags"><img alt="version" src="https://img.shields.io/github/v/tag/SACO1F/Knocknock?label=version&color=0A84FF"></a>
   <img alt="platform" src="https://img.shields.io/badge/platform-Windows%2010%2B-0078D6">
   <img alt="python" src="https://img.shields.io/badge/python-3.9%2B-3776AB">
   <img alt="pyside6" src="https://img.shields.io/badge/PySide6-Essentials%206.6%2B-41CD52">
