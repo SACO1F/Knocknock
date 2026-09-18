@@ -1171,7 +1171,7 @@ def t_i18n(app) -> None:
         i18n.set_language(original)
 
 
-# ==================================================================== 15 pinned header + double-Alt close
+# ==================================================================== 15 pinned header + double-tap close
 def t_header_pinned() -> None:
     """The title bar must always stay at the top of the card and never move with the panel height.
 
@@ -1758,11 +1758,33 @@ def t_model_split() -> None:
     err = LLMWorker(cfg, with_image)._describe_http_error(_FakeResponse(404, {"error": {"message": "nope"}}))
     assert "qwen-vl-max" in err, f"the failing model is not named in the error: {err!r}"
 
-    # The connection test must cover both models
-    lines = test_connection(cfg).splitlines()
-    assert len(lines) == 2, lines
-    lines = test_connection({"model": "deepseek-chat", "vision_model": ""}).splitlines()
-    assert len(lines) == 2 and "deepseek-chat" not in lines[1], lines
+    # The connection test must cover both models. It is pointed at the local
+    # mock: without a base_url the call goes to the real api.openai.com, which
+    # made this case pass or fail depending on what the network returned rather
+    # than on the code under test.
+    server = HTTPServer(("127.0.0.1", 0), _MockHandler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    previous_mode = _MockHandler.mode
+    _MockHandler.mode = "plain"   # _probe() asks for a non-streaming reply
+    try:
+        probe_cfg = dict(cfg, base_url=f"http://127.0.0.1:{port}",
+                         api_key="sk-test", timeout=20)
+        report = test_connection(probe_cfg)
+        assert len(report.splitlines()) == 2, report
+        # The vision probe must really have hit the vision model, in that order.
+        models = [request["body"]["model"] for request in _MockHandler.record[-2:]]
+        assert models == ["deepseek-chat", "qwen-vl-max"], models
+
+        # An empty vision model collapses to the single-model report, and the
+        # vision endpoint is not probed at all.
+        before = len(_MockHandler.record)
+        second = test_connection(dict(probe_cfg, vision_model=""))
+        assert len(second.splitlines()) == 2, second
+        assert [request["body"]["model"] for request in _MockHandler.record[before:]] == ["deepseek-chat"]
+    finally:
+        _MockHandler.mode = previous_mode
+        server.shutdown()
 
     # Preview tiers: the picture must respect the chosen box, and changing the
     # preference re-fits a picture that is already on screen.

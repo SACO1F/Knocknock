@@ -119,7 +119,7 @@ class GlobalInput(QObject):
 
         self._running = True
         self.reset_state()
-        self._thread = threading.Thread(target=self._run, name="knock-input", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="knocknock-input", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
